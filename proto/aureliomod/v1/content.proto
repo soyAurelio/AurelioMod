@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package aureliomod.v1;
+
+option go_package = "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1;aureliomodv1";
+
+// ContentAnalysisService is the core RPC for content moderation.
+// Edge services (Discord/Telegram/Twitch bots) call this via ConnectRPC
+// when a user submits content for moderation.
+service ContentAnalysisService {
+  // Analyze submits content for moderation analysis.
+  // Returns immediately with a decision (block/allow) based on cache hits,
+  // or a QUEUED status if WaveSpeed analysis is required.
+  rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
+}
+
+message AnalyzeRequest {
+  // workspace_id identifies the customer workspace.
+  string workspace_id = 1;
+
+  // content_id is a client-generated unique identifier for idempotency.
+  string content_id = 2;
+
+  // raw_bytes is the original content as received from the platform.
+  bytes raw_bytes = 3;
+
+  // content_type indicates the type of content being analyzed.
+  ContentType content_type = 4;
+
+  // source_platform indicates which platform the content came from.
+  SourcePlatform source_platform = 5;
+}
+
+message AnalyzeResponse {
+  // decision is the moderation decision.
+  Decision decision = 1;
+
+  // block_reason is the human-readable explanation (required by DSA Art. 15).
+  // Exposed in the dashboard as "statement of reasons".
+  string block_reason = 2;
+
+  // confidence is the AI model confidence (0.0 to 1.0).
+  double confidence = 3;
+
+  // category is the classification category (e.g., "violence_graphic").
+  string category = 4;
+
+  // content_hash is the BLAKE3 hash of the normalized content (L1 cache key).
+  string content_hash = 5;
+
+  // cache_level indicates which cache level produced the decision.
+  CacheLevel cache_level = 6;
+
+  // processing_ms is the total processing time in milliseconds.
+  int64 processing_ms = 7;
+
+  // analyst_version is the WaveSpeed model version used (for audit).
+  string analyst_version = 8;
+}
+
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_ALLOW = 1;
+  DECISION_BLOCK = 2;
+  DECISION_QUEUED = 3; // Pending WaveSpeed analysis
+  DECISION_ERROR = 4;  // Analysis failed; fallback to cached or block
+}
+
+enum ContentType {
+  CONTENT_TYPE_UNSPECIFIED = 0;
+  CONTENT_TYPE_IMAGE = 1;
+  CONTENT_TYPE_GIF = 2;
+  CONTENT_TYPE_VIDEO = 3;
+  CONTENT_TYPE_AUDIO = 4;
+  CONTENT_TYPE_EXTERNAL_URL = 5;
+  CONTENT_TYPE_FINGERPRINT = 6;
+}
+
+enum SourcePlatform {
+  SOURCE_PLATFORM_UNSPECIFIED = 0;
+  SOURCE_PLATFORM_DISCORD = 1;
+  SOURCE_PLATFORM_TELEGRAM = 2;
+  SOURCE_PLATFORM_TWITCH = 3;
+  SOURCE_PLATFORM_TIKTOK = 4;
+  SOURCE_PLATFORM_KICK = 5;
+}
+
+enum CacheLevel {
+  CACHE_LEVEL_UNSPECIFIED = 0;
+  CACHE_LEVEL_NONE = 1;      // Full analysis performed
+  CACHE_LEVEL_L1_BLAKE3 = 2; // Exact match (BLAKE3)
+  CACHE_LEVEL_L2_PHASH = 3;  // Perceptual match (pHash)
+  CACHE_LEVEL_L3_WEAVIATE = 4; // Semantic match (Weaviate)
+}
