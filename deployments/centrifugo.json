@@ -1,0 +1,18 @@
+{
+  "client": {
+    "token": {
+      "hmac_secret_key": "dev-secret-change-in-production"
+    },
+    "allowed_origins": ["*"],
+    "insecure": true
+  },
+  "http_api": {
+    "key": "dev-api-key-change-in-production"
+  },
+  "admin": {
+    "password": "dev-admin-change-in-production",
+    "secret": "dev-admin-secret-change-in-production",
+    "enabled": true,
+    "insecure": true
+  }
+}

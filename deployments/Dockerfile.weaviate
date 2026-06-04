@@ -1,0 +1,28 @@
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates tzdata curl
+
+# Download official Weaviate binary from GitHub releases
+ARG TARGETARCH=amd64
+ADD https://github.com/weaviate/weaviate/releases/download/v1.37.7/weaviate-v1.37.7-linux-${TARGETARCH}.tar.gz /tmp/
+
+RUN tar xzf /tmp/weaviate-v1.37.7-linux-*.tar.gz -C /usr/local/bin/ weaviate && \
+    rm /tmp/weaviate-v1.37.7-linux-*.tar.gz && \
+    chmod +x /usr/local/bin/weaviate
+
+# Default env vars matching official image
+ENV AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true \
+    PERSISTENCE_DATA_PATH=/var/lib/weaviate \
+    DEFAULT_VECTORIZER_MODULE=none \
+    ENABLE_MODULES="" \
+    CLUSTER_HOSTNAME=node1 \
+    QUERY_DEFAULTS_LIMIT=25
+
+# Create data directory
+RUN mkdir -p /var/lib/weaviate
+
+EXPOSE 8080 50051
+
+# Official Weaviate command: --host 0.0.0.0 --port 8080 --scheme http
+ENTRYPOINT ["weaviate"]
+CMD ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http"]

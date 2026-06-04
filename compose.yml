@@ -1,0 +1,150 @@
+# AurelioMod — Dev Environment
+# Fase 1: MVP — Servidor único con Docker Compose
+# Versiones pineadas — Junio 2026
+
+services:
+  # === Cache L1/L2 (BLAKE3 + pHash) ===
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.38.1
+    container_name: aureliomod-dragonfly
+    ports:
+      - "6380:6379"
+    command:
+      - "--cache_mode=true"
+      - "--maxmemory=4gb"
+      - "--dbnum=1"
+      - "--minloglevel=2"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      retries: 3
+    volumes:
+      - dragonfly_data:/data
+
+  # === Message Queue (async Edge ↔ Engine) ===
+  nats:
+    image: nats:2.14.2-alpine
+    container_name: aureliomod-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command:
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "-m=8222"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      retries: 5
+    volumes:
+      - nats_data:/data
+
+  # === Vector Database (L3 — búsqueda semántica) ===
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.37.7
+    container_name: aureliomod-weaviate
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--scheme"
+      - "http"
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "none"
+      ENABLE_MODULES: ""
+      CLUSTER_HOSTNAME: "node1"
+      QUERY_DEFAULTS_LIMIT: "25"
+      LOG_LEVEL: "info"
+      RAFT_BOOTSTRAP_EXPECT: "1"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      retries: 5
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+
+  # === WebSocket/Real-time (dashboard updates) ===
+  centrifugo:
+    image: centrifugo/centrifugo:v6.8.1
+    container_name: aureliomod-centrifugo
+    ports:
+      - "8000:8000"
+    command: -c /centrifugo/config.json
+    volumes:
+      - ./deployments/centrifugo.json:/centrifugo/config.json:ro
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+
+  # === Object Storage (dev) ===
+  minio:
+    image: minio/minio:latest
+    container_name: aureliomod-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      retries: 5
+    volumes:
+      - minio_data:/data
+
+  # === Observabilidad ===
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.144.0
+    container_name: aureliomod-vmetrics
+    ports:
+      - "8428:8428"
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=30d"
+    volumes:
+      - vmetrics_data:/storage
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: aureliomod-tempo
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    command:
+      - "-config.file=/etc/tempo.yaml"
+    volumes:
+      - ./deployments/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aureliomod-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  dragonfly_data:
+  nats_data:
+  weaviate_data:
+  minio_data:
+  vmetrics_data:
+  tempo_data:
+  grafana_data:
