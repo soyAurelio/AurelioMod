@@ -8,12 +8,15 @@
 //	WaveSpeed: AI API (seconds)        → fresh analysis (fallback)
 //
 // On cache miss, the pipeline calls WaveSpeed and back-populates all cache layers.
+// After a WaveSpeed decision, integration hooks fire: audit emission, NATS
+// publish, and quarantine update — all fire-and-forget (non-blocking).
 package pipeline
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
@@ -37,12 +40,49 @@ type Pipeline interface {
 	Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.AnalyzeResponse, error)
 }
 
+// AuditHook is called after a WaveSpeed decision is produced to emit an
+// immutable audit event. Implementations write to slog, Neon DB, and R2.
+type AuditHook func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64, processingMs int64)
+
+// DecisionHook is called after a WaveSpeed decision to publish the result
+// via NATS for Centrifugo → dashboard real-time relay.
+type DecisionHook func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64)
+
+// QuarantineHook is called after a WaveSpeed decision to update the
+// inverted quarantine state machine (PENDING → BLOCKED | RELEASED).
+type QuarantineHook func(ctx context.Context, contentID, decision, category string, confidence float64)
+
+// PipelineOption configures optional pipeline behavior.
+type PipelineOption func(*pipeline)
+
+// WithAuditHook sets the audit emission hook, fired after WaveSpeed decisions.
+func WithAuditHook(h AuditHook) PipelineOption {
+	return func(p *pipeline) { p.auditHook = h }
+}
+
+// WithDecisionHook sets the NATS decision publishing hook.
+func WithDecisionHook(h DecisionHook) PipelineOption {
+	return func(p *pipeline) { p.decisionHook = h }
+}
+
+// WithQuarantineHook sets the quarantine state update hook.
+func WithQuarantineHook(h QuarantineHook) PipelineOption {
+	return func(p *pipeline) { p.quarantineHook = h }
+}
+
 type pipeline struct {
 	l1cache        cache.L1Cache
 	l2cache        cache.L2Cache
 	normalizer     ContentNormalizer
 	analyzer       analyzer.Analyzer
 	weaviateClient weaviate.WeaviateClient
+
+	// Integration hooks (fire-and-forget, non-blocking)
+	auditHook      AuditHook
+	decisionHook   DecisionHook
+	quarantineHook QuarantineHook
+
+	wg sync.WaitGroup // tracks in-flight hook goroutines
 }
 
 // New creates a Pipeline backed by L1/L2 caches, content normalizer,
@@ -50,20 +90,28 @@ type pipeline struct {
 //
 // analyzer and weaviateClient may be nil — in that case L3+WaveSpeed
 // layers are skipped and a QUEUED decision is returned on cache miss.
+//
+// Optional hooks (audit, decision publish, quarantine) can be configured
+// via PipelineOption functions. All hooks are fire-and-forget.
 func New(
 	l1 cache.L1Cache,
 	l2 cache.L2Cache,
 	norm ContentNormalizer,
 	a analyzer.Analyzer,
 	wv weaviate.WeaviateClient,
+	opts ...PipelineOption,
 ) Pipeline {
-	return &pipeline{
+	p := &pipeline{
 		l1cache:        l1,
 		l2cache:        l2,
 		normalizer:     norm,
 		analyzer:       a,
 		weaviateClient: wv,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Execute runs the normalization → L1 → L2 → L3 → WaveSpeed cascade.
@@ -212,6 +260,10 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 	// Step 7: Back-populate all cache layers (best-effort, non-blocking)
 	p.backPopulate(ctx, l1Hash, ph, cached)
 
+	// Step 8: Fire integration hooks (audit, NATS, quarantine) — fire-and-forget.
+	// All hooks run in goroutines so they never block the response pipeline.
+	p.fireHooks(ctx, req, l1Hash, cached, time.Since(start).Milliseconds())
+
 	return &v1.AnalyzeResponse{
 		Decision:     cached.Decision,
 		BlockReason:  cached.Category,
@@ -285,4 +337,46 @@ func buildResponse(d *cache.CachedDecision, level v1.CacheLevel, l1Hash string, 
 		CacheLevel:   level,
 		ProcessingMs: elapsed.Milliseconds(),
 	}
+}
+
+// fireHooks launches all configured integration hooks in fire-and-forget
+// goroutines. Hooks are non-blocking — they must never delay the pipeline
+// response. Failures within hooks are logged by the hook implementations.
+func (p *pipeline) fireHooks(ctx context.Context, req *v1.AnalyzeRequest, contentHash string, d *cache.CachedDecision, processingMs int64) {
+	decision := d.Decision.String()
+	workspaceID := req.WorkspaceId
+	contentID := req.ContentId
+
+	// Audit emission (fire-and-forget)
+	if p.auditHook != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.auditHook(ctx, workspaceID, contentHash, decision, d.Category, d.Confidence, processingMs)
+		}()
+	}
+
+	// NATS decision publish (fire-and-forget)
+	if p.decisionHook != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.decisionHook(ctx, workspaceID, contentHash, decision, d.Category, d.Confidence)
+		}()
+	}
+
+	// Quarantine update (fire-and-forget)
+	if p.quarantineHook != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.quarantineHook(ctx, contentID, decision, d.Category, d.Confidence)
+		}()
+	}
+}
+
+// Wait blocks until all in-flight hook goroutines have completed.
+// Useful for graceful shutdown and testing.
+func (p *pipeline) Wait() {
+	p.wg.Wait()
 }
