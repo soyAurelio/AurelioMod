@@ -66,7 +66,7 @@ type mockNormalizer struct {
 	err    error
 }
 
-func (m *mockNormalizer) Normalize(_ []byte) (*hasher.NormalizeResult, error) {
+func (m *mockNormalizer) Normalize(_ context.Context, _ []byte) (*hasher.NormalizeResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -899,4 +899,74 @@ func TestPipeline_PartialBackPopulationFailure(t *testing.T) {
 	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
 		t.Errorf("CacheLevel = %v, want NONE", resp.CacheLevel)
 	}
+}
+
+// --- synctest deadline scenarios ---
+
+// slowNormalizer blocks until the context is cancelled, simulating a
+// slow FFmpeg process that respects context deadlines.
+type slowNormalizer struct{}
+
+func (s *slowNormalizer) Normalize(ctx context.Context, _ []byte) (*hasher.NormalizeResult, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestPipeline_Deadline_NormalizeExpired verifies that when the context
+// deadline expires during normalization, the pipeline returns the deadline
+// error rather than hanging indefinitely.
+func TestPipeline_Deadline_NormalizeExpired(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
+		l2 := &mockL2Cache{}
+
+		p := New(l1, l2, &slowNormalizer{}, nil, nil)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+
+		// In synctest: 50ms virtual time passes, timeout fires, normalizer unblocks
+		_, err := p.Execute(ctx, &v1.AnalyzeRequest{
+			WorkspaceId: "ws-deadline",
+			RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+		})
+
+		if err == nil {
+			t.Fatal("Expected deadline error, got nil")
+		}
+	})
+}
+
+// slowAnalyzer blocks until the context is cancelled, simulating a
+// slow WaveSpeed API call that respects context deadlines.
+type slowAnalyzer struct{}
+
+var _ analyzer.Analyzer = (*slowAnalyzer)(nil)
+
+func (s *slowAnalyzer) Analyze(ctx context.Context, _, _ string) (*analyzer.ModerationResult, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestPipeline_Deadline_WaveSpeedExpired verifies that when L1 and L2 miss
+// and the WaveSpeed call times out, the pipeline returns a deadline error.
+func TestPipeline_Deadline_WaveSpeedExpired(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
+		l2 := &mockL2Cache{decisions: nil}                                // miss
+
+		p := New(l1, l2, &mockNormalizer{pixels: testPixels()}, &slowAnalyzer{}, nil)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err := p.Execute(ctx, &v1.AnalyzeRequest{
+			WorkspaceId: "ws-deadline-ws",
+			RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+		})
+
+		if err == nil {
+			t.Fatal("Expected deadline error from WaveSpeed, got nil")
+		}
+	})
 }

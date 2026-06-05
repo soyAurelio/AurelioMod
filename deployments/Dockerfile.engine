@@ -5,8 +5,9 @@
 # Stages:
 #   1. builder   — golang:1.26-alpine  → compile Go binary (CGO_ENABLED=0)
 #   2. ffmpeg    — jrottenberg/ffmpeg  → extract ffmpeg binary
-#   3. health    — busybox:1.37         → extract wget for HEALTHCHECK
-#   4. runtime   — distroless/static    → final minimal image
+#   3. nsjail    — nsjail source build  → static nsjail binary (musl-gcc + make)
+#   4. health    — busybox:1.37         → extract wget for HEALTHCHECK
+#   5. runtime   — distroless/static    → final minimal image
 
 # === Stage 1: Build Go binary ===
 FROM golang:1.26-alpine AS builder
@@ -28,23 +29,44 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # === Stage 2: Extract FFmpeg from official image ===
 FROM jrottenberg/ffmpeg:7.1-ubuntu AS ffmpeg
 
-# === Stage 3: Extract wget for HEALTHCHECK ===
+# === Stage 3: Build nsjail (glibc-based, Ubuntu) ===
+# nsjail requires glibc (rlimit64, RLIM64_INFINITY) — incompatible with musl/Alpine.
+FROM ubuntu:24.04 AS nsjail
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git make g++ protobuf-compiler libprotobuf-dev protobuf-c-compiler \
+    libprotobuf-c-dev libnl-3-dev libnl-route-3-dev flex bison pkg-config \
+    ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /nsjail
+
+RUN git clone --depth 1 --branch master https://github.com/google/nsjail.git .
+
+RUN make -j"$(nproc)" && strip nsjail
+
+# === Stage 4: Extract wget for HEALTHCHECK ===
 FROM busybox:1.37 AS health
 
-# === Stage 4: Runtime — Distroless ===
-FROM gcr.io/distroless/static-debian12:nonroot AS runtime
-
-# Copy CA certificates for HTTPS (WaveSpeed API)
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# === Stage 5: Runtime — FFmpeg base + Engine binary ===
+# Uses jrottenberg/ffmpeg as base (provides FFmpeg + all shared libs)
+# Distroless deferred to later phase once a static FFmpeg build is available.
+FROM jrottenberg/ffmpeg:7.1-ubuntu AS runtime
 
 # Copy Go binary
-COPY --from=builder /bin/engine /bin/engine
+COPY --from=builder /bin/engine /usr/bin/engine
 
-# Copy FFmpeg binary (pinned 7.1, NOT :latest)
-COPY --from=ffmpeg /usr/bin/ffmpeg /usr/bin/ffmpeg
+# Copy nsjail static binary (sandboxed FFmpeg/yt-dlp execution)
+COPY --from=nsjail /nsjail/nsjail /usr/bin/nsjail
 
-# Copy wget for Docker HEALTHCHECK (static binary, no deps)
+# Copy protobuf shared libraries required by nsjail
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libprotobuf32t64 libnl-3-200 libnl-route-3-200 && rm -rf /var/lib/apt/lists/*
+
+# Copy wget for Docker HEALTHCHECK
 COPY --from=health /bin/wget /usr/bin/wget
+
+# Symlink FFmpeg to expected path (binary lives at /usr/local/bin/ffmpeg in this image)
+RUN ln -s /usr/local/bin/ffmpeg /usr/bin/ffmpeg
 
 # Expose HTTP port
 EXPOSE 8080
@@ -62,7 +84,4 @@ LABEL org.opencontainers.image.created="2026-06-05"
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 --start-period=10s \
     CMD ["/usr/bin/wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
 
-# Run as non-root user (provided by distroless:nonroot)
-USER nonroot:nonroot
-
-ENTRYPOINT ["/bin/engine"]
+ENTRYPOINT ["/usr/bin/engine"]

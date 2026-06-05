@@ -1,0 +1,29 @@
+# golangci-lint configuration for AurelioMod
+# Enforces Go 1.26 idioms, security checks, and style consistency.
+
+run:
+  timeout: 5m
+  go: "1.26"
+
+linters:
+  enable:
+    - govet          # Go vet reports
+    - staticcheck    # static analysis
+    - errcheck       # unchecked errors
+    - gosec          # security checks
+    - goimports      # import formatting + grouping
+    - ineffassign    # ineffective assignments
+    - misspell       # spelling in comments
+
+linters-settings:
+  govet:
+    enable-all: true
+  goimports:
+    local-prefixes: github.com/soyAurelio/AurelioMod
+
+issues:
+  exclude-dirs:
+    - proto/
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.connect\\.go$"

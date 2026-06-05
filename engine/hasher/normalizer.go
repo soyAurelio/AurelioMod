@@ -1,9 +1,11 @@
 package hasher
 
 import (
-	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
+	"strconv"
+
+	"github.com/soyAurelio/AurelioMod/engine/media"
 )
 
 // NormalizeResult holds both the raw pixels (for hashing) and the JPEG bytes (for storage).
@@ -14,16 +16,20 @@ type NormalizeResult struct {
 }
 
 // Normalizer runs FFmpeg to decode, normalize, and optionally re-encode content.
+// Uses an injected FFmpegRunner for sandboxed execution.
 type Normalizer struct {
-	ffmpegPath string
+	runner media.FFmpegRunner
 }
 
-// NewNormalizer creates a Normalizer. Uses "ffmpeg" if path is empty.
-func NewNormalizer(ffmpegPath string) *Normalizer {
-	if ffmpegPath == "" {
-		ffmpegPath = "ffmpeg"
-	}
-	return &Normalizer{ffmpegPath: ffmpegPath}
+// NewNormalizer creates a Normalizer with a sandboxed or direct FFmpeg runner.
+func NewNormalizer(runner media.FFmpegRunner) *Normalizer {
+	return &Normalizer{runner: runner}
+}
+
+// NewNormalizerWithRunner creates a Normalizer with the given FFmpegRunner
+// and an optional fallback path. The path is ignored if runner is non-nil.
+func NewNormalizerWithRunner(runner media.FFmpegRunner, _ string) *Normalizer {
+	return &Normalizer{runner: runner}
 }
 
 // Normalize runs the full normalization pipeline on raw input bytes.
@@ -36,16 +42,17 @@ func NewNormalizer(ffmpegPath string) *Normalizer {
 //  5. Also produce a JPEG Q85 copy (for storage only, NOT for hashing)
 //
 // The RGB pixel data is completely deterministic across FFmpeg versions and CPU architectures.
-func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
+// The injected FFmpegRunner (media.FFmpegRunner) controls sandboxed or direct execution.
+func (n *Normalizer) Normalize(ctx context.Context, input []byte) (*NormalizeResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("normalize: empty input")
 	}
 
 	// Detect MIME type from magic bytes
-	mimeType := detectMIME(input)
+	mimeType := DetectMIME(input)
 
 	// Pass 1: extract raw RGB24 pixels for hashing
-	rgbPixels, err := n.extractPixels(input)
+	rgbPixels, err := n.extractPixels(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("normalize: extract pixels: %w", err)
 	}
@@ -54,8 +61,9 @@ func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
 		return nil, fmt.Errorf("normalize: FFmpeg produced 0 bytes of pixel data")
 	}
 
-	// Pass 2: produce JPEG Q85 for storage (separate, not used for hash)
-	jpegBytes, err := n.encodeJPEG(input)
+	// Pass 2: produce JPEG Q85 for storage (re-encoded from decoded pixels,
+	// NOT raw input — this strips polyglot payloads like JPEG+ZIP).
+	jpegBytes, err := n.encodeJPEG(ctx, rgbPixels)
 	if err != nil {
 		return nil, fmt.Errorf("normalize: encode jpeg: %w", err)
 	}
@@ -67,102 +75,53 @@ func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
 	}, nil
 }
 
-// extractPixels runs FFmpeg to decode input and output raw RGB24 pixels.
+// extractPixels runs FFmpeg (via injected runner) to decode input and output raw RGB24 pixels.
 // Command:
 //
 //	ffmpeg -i pipe:0 -vf scale=-2:480,format=rgb24 -map_metadata -1
 //	       -f rawvideo -pix_fmt rgb24 pipe:1
-func (n *Normalizer) extractPixels(input []byte) ([]byte, error) {
-	cmd := exec.Command(n.ffmpegPath,
-		"-i", "pipe:0", // Read from stdin
-		"-vf", "scale=-2:480,format=rgb24", // Resize + force pixel format
-		"-map_metadata", "-1", // Strip all metadata
-		"-f", "rawvideo", // Output format: raw video
-		"-pix_fmt", "rgb24", // Pixel format
-		"pipe:1", // Write to stdout
-	)
-
-	return runFFmpegPipe(cmd, input)
-}
-
-// encodeJPEG runs FFmpeg to produce a JPEG Q85 from the normalized input.
-// Command:
-//
-//	ffmpeg -i pipe:0 -vf scale=-2:480,format=rgb24 -map_metadata -1
-//	       -f image2 -q:v 3 pipe:1
-func (n *Normalizer) encodeJPEG(input []byte) ([]byte, error) {
-	cmd := exec.Command(n.ffmpegPath,
+func (n *Normalizer) extractPixels(ctx context.Context, input []byte) ([]byte, error) {
+	return n.runner.Run(ctx, []string{
 		"-i", "pipe:0",
 		"-vf", "scale=-2:480,format=rgb24",
 		"-map_metadata", "-1",
-		"-f", "image2", // Output format: single image
-		"-q:v", "3", // JPEG quality (2-5 range, 3 ≈ Q85)
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
 		"pipe:1",
-	)
-
-	return runFFmpegPipe(cmd, input)
+	}, input)
 }
 
-// runFFmpegPipe executes an FFmpeg command with stdin/stdout pipe I/O.
-func runFFmpegPipe(cmd *exec.Cmd, input []byte) ([]byte, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	cmd.Stdin = bytes.NewReader(input)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg error: %w\nstderr: %s", err, stderr.String())
+// encodeJPEG produces a JPEG Q85 from already-decoded RGB24 pixel data.
+// This is the anti-polyglot step: by re-encoding FROM decoded pixels (not
+// raw input bytes), any embedded polyglot payload (e.g., ZIP inside JPEG)
+// is irreversibly stripped — only visual pixel data survives.
+//
+// Pixel dimensions are derived from the data: height=480 (fixed by extractPixels),
+// width=len(pixels)/(480*3) bytes per pixel for RGB24.
+//
+// Command:
+//
+//	ffmpeg -f rawvideo -pix_fmt rgb24 -s {width}x480 -i pipe:0
+//	       -f image2 -q:v 3 pipe:1
+func (n *Normalizer) encodeJPEG(ctx context.Context, pixels []byte) ([]byte, error) {
+	if len(pixels) == 0 {
+		return nil, fmt.Errorf("encode jpeg: empty pixel buffer")
 	}
 
-	return stdout.Bytes(), nil
-}
-
-// detectMIME inspects magic bytes to determine the content type.
-// This is used before normalization to validate that the declared MIME type
-// matches the actual content (polyglot detection).
-func detectMIME(data []byte) string {
-	dlen := len(data)
-	if dlen == 0 {
-		return "application/octet-stream"
+	const height = 480
+	const bpp = 3 // RGB24 = 3 bytes per pixel
+	width := len(pixels) / (height * bpp)
+	if width == 0 {
+		return nil, fmt.Errorf("encode jpeg: pixel buffer too small for 480p (got %d bytes)", len(pixels))
 	}
 
-	// JPEG: FF D8 FF (needs 3 bytes)
-	if dlen >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
-		return "image/jpeg"
-	}
-
-	// PNG: 89 50 4E 47 (needs 8 bytes for full header check)
-	if dlen >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-		return "image/png"
-	}
-
-	// GIF: 47 49 46 38 (needs 6 bytes)
-	if dlen >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x38 {
-		return "image/gif"
-	}
-
-	// ZIP-based (polyglot detection): PK (needs 4 bytes)
-	if dlen >= 4 && data[0] == 'P' && data[1] == 'K' {
-		return "application/zip"
-	}
-
-	// Remaining formats need at least 12 bytes
-	if dlen < 12 {
-		return "application/octet-stream"
-	}
-
-	// WebP: 52 49 46 46 ... 57 45 42 50
-	if data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F' &&
-		data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'P' {
-		return "image/webp"
-	}
-
-	// MP4: ... ftyp at offset 4
-	if data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p' {
-		return "video/mp4"
-	}
-
-	return "application/octet-stream"
+	return n.runner.Run(ctx, []string{
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
+		"-s", strconv.Itoa(width) + "x" + strconv.Itoa(height),
+		"-i", "pipe:0",
+		"-f", "image2",
+		"-q:v", "3",
+		"pipe:1",
+	}, pixels)
 }

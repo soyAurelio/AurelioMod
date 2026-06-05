@@ -22,18 +22,24 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/audit"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
+	"github.com/soyAurelio/AurelioMod/engine/media"
 	engineNats "github.com/soyAurelio/AurelioMod/engine/nats"
 	"github.com/soyAurelio/AurelioMod/engine/pipeline"
+	"github.com/soyAurelio/AurelioMod/engine/safety"
 	"github.com/soyAurelio/AurelioMod/engine/service"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
+	"github.com/soyAurelio/AurelioMod/internal/auth"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
 	internalnats "github.com/soyAurelio/AurelioMod/internal/nats"
+	"github.com/soyAurelio/AurelioMod/internal/paseto"
 	"github.com/soyAurelio/AurelioMod/internal/weaviate"
 	"github.com/soyAurelio/AurelioMod/proto/aureliomod/v1/aureliomodv1connect"
 )
@@ -73,6 +79,20 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// setGOMAXPROCS reserves one logical CPU for FFmpeg subprocesses.
+// It returns the value passed to runtime.GOMAXPROCS.
+// Exported for testing.
+func setGOMAXPROCS(numCPU int) int {
+	n := max(1, numCPU-1)
+	runtime.GOMAXPROCS(n)
+	return n
+}
+
+// init configures runtime settings before main() executes.
+func init() {
+	setGOMAXPROCS(runtime.NumCPU())
+}
+
 func main() {
 	// Structured JSON logger (production default)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -81,6 +101,16 @@ func main() {
 	slog.SetDefault(logger)
 
 	cfg := loadConfig()
+
+	// Start pprof admin server on separate port with PASETO auth
+	if key := os.Getenv("PPROF_ADMIN_KEY"); key != "" {
+		pprofTm, err := newPprofTokenManager(key)
+		if err != nil {
+			slog.Error("pprof token manager init failed", "error", err)
+			os.Exit(1)
+		}
+		go startPprofServer(pprofTm)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -161,8 +191,26 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	})
 	slog.InfoContext(ctx, "cache client created", "addr", cfg.DragonflyAddr)
 
-	// Content normalizer
-	normalizer := hasher.NewNormalizer("ffmpeg")
+	// Content normalizer with nsjail sandbox gate
+	sandboxEnabled := os.Getenv("MEDIA_SANDBOX_ENABLED") != "false" // default: true
+	ffmpegRunner := media.NewNsJailFFmpeg("/usr/bin/nsjail", "/usr/bin/ffmpeg", sandboxEnabled)
+	normalizer := hasher.NewNormalizer(ffmpegRunner)
+	slog.InfoContext(ctx, "content normalizer created",
+		"sandbox", sandboxEnabled,
+	)
+
+	// Safe Browsing URL reputation service
+	sbEnabled := os.Getenv("SAFEBROWSING_ENABLED") != "false" // default: true
+	sbService := safety.NewSafeBrowsingService(safety.SafeBrowsingConfig{
+		RDB:    cacheClient.RDB(), // Access the underlying go-redis client for SETEX caching
+		Enabled: sbEnabled,
+	})
+	if sbEnabled {
+		slog.InfoContext(ctx, "Safe Browsing service created", "cache_ttl", "15m")
+	} else {
+		slog.WarnContext(ctx, "SAFEBROWSING_ENABLED=false — URL safety checks disabled")
+	}
+	_ = sbService // wired for future URL-sourced content pipeline integration
 
 	// WaveSpeed analyzer (optional)
 	var waveSpeed analyzer.Analyzer
@@ -182,11 +230,31 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	// --- Integration hooks ---
 
-	// Audit emitter (slog JSON → stdout only; Neon/R2 are nil until provisioned)
+	// Audit emitter chain: slog (critical) + Neon DB (best-effort, gated).
+	// R2 cold storage is nil until provisioned.
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	auditEmitter := audit.NewMultiEmitter(auditLogger, nil, nil)
+
+	// Neon DB audit emitter — gated by NEON_AUDIT_ENABLED env var.
+	// When disabled (default), neonStore is nil and MultiEmitter skips it.
+	var neonStore audit.NeonStore
+	if os.Getenv("NEON_AUDIT_ENABLED") == "true" {
+		url := os.Getenv("NEON_DATABASE_URL")
+		if url == "" {
+			slog.WarnContext(ctx, "NEON_AUDIT_ENABLED=true but NEON_DATABASE_URL not set — skipping Neon emitter")
+		} else {
+			ne, err := audit.NewNeonEmitter(ctx, url)
+			if err != nil {
+				slog.WarnContext(ctx, "neon audit emitter init failed", "error", err)
+			} else {
+				neonStore = ne
+				slog.InfoContext(ctx, "neon audit emitter enabled")
+			}
+		}
+	}
+
+	auditEmitter := audit.NewMultiEmitter(auditLogger, neonStore, nil)
 
 	// NATS decision publisher (optional)
 	var decisionHook pipeline.DecisionHook
@@ -246,9 +314,26 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	slog.InfoContext(ctx, "pipeline initialized")
 
+	// --- PASETO auth interceptor (gated by PASETO_AUTH_ENABLED) ---
+	var handlerOpts []connect.HandlerOption
+	if os.Getenv("PASETO_AUTH_ENABLED") == "true" {
+		keyHex := os.Getenv("PASETO_SECRET_KEY")
+		if keyHex == "" {
+			return nil, fmt.Errorf("PASETO_AUTH_ENABLED=true requires PASETO_SECRET_KEY")
+		}
+		tm, err := paseto.NewFromHex(keyHex)
+		if err != nil {
+			return nil, fmt.Errorf("paseto auth init: %w", err)
+		}
+		authInterceptor := auth.NewPASETOInterceptor(tm.PublicKey())
+		handlerOpts = append(handlerOpts, connect.WithInterceptors(authInterceptor))
+		slog.InfoContext(ctx, "paseto auth interceptor enabled")
+	}
+
 	// --- ConnectRPC handler ---
-	handler := service.NewHandler(pipe)
-	path, h := aureliomodv1connect.NewContentAnalysisServiceHandler(handler)
+	enforceMIME := os.Getenv("ENFORCE_MIME") == "true"
+	handler := service.NewHandler(pipe, enforceMIME)
+	path, h := aureliomodv1connect.NewContentAnalysisServiceHandler(handler, handlerOpts...)
 	mux.Handle(path, h)
 
 	slog.InfoContext(ctx, "connectrpc handler registered", "path", path)
