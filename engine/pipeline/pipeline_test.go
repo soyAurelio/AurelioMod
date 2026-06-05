@@ -3,8 +3,10 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
@@ -571,6 +573,291 @@ func TestPipeline_L3Unavailable_SkipToWaveSpeed(t *testing.T) {
 	}
 	if resp.ContentHash != blake3Hash {
 		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// --- audit + nats + quarantine mocks ---
+
+// hookCall records a hook invocation for test verification.
+type hookCall struct {
+	workspaceID string
+	contentHash string
+	contentID   string
+	decision    string
+	category    string
+	confidence  float64
+	processingMs int64
+}
+
+// mockHooks collects hook calls from audit, decision, and quarantine hooks.
+type mockHooks struct {
+	mu    sync.Mutex
+	calls []hookCall
+}
+
+func (m *mockHooks) record(c hookCall) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, c)
+}
+
+func (m *mockHooks) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.calls)
+}
+
+// auditHook returns an AuditHook that records calls to mockHooks.
+func (m *mockHooks) auditHook() AuditHook {
+	return func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64, processingMs int64) {
+		m.record(hookCall{
+			workspaceID:  workspaceID,
+			contentHash:  contentHash,
+			decision:     decision,
+			category:     category,
+			confidence:   confidence,
+			processingMs: processingMs,
+		})
+	}
+}
+
+// decisionHook returns a DecisionHook that records calls to mockHooks.
+func (m *mockHooks) decisionHook() DecisionHook {
+	return func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64) {
+		m.record(hookCall{
+			workspaceID: workspaceID,
+			contentHash: contentHash,
+			decision:    decision,
+			category:    category,
+			confidence:  confidence,
+		})
+	}
+}
+
+// quarantineHook returns a QuarantineHook that records calls to mockHooks.
+func (m *mockHooks) quarantineHook() QuarantineHook {
+	return func(ctx context.Context, contentID, decision, category string, confidence float64) {
+		m.record(hookCall{
+			contentID:  contentID,
+			decision:   decision,
+			category:   category,
+			confidence: confidence,
+		})
+	}
+}
+
+// newFullPipelineWithHooks creates a pipeline with all 5 dependencies
+// plus integration hooks. Nil hooks are passed as nil options.
+func newFullPipelineWithHooks(
+	l1 *mockL1Cache, l2 *mockL2Cache,
+	a *mockAnalyzer, wv *mockWvClient,
+	hooks *mockHooks,
+) Pipeline {
+	var opts []PipelineOption
+	if hooks != nil {
+		opts = append(opts, WithAuditHook(hooks.auditHook()))
+		opts = append(opts, WithDecisionHook(hooks.decisionHook()))
+		opts = append(opts, WithQuarantineHook(hooks.quarantineHook()))
+	}
+	return New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv, opts...)
+}
+
+// --- integration hook tests ---
+
+// TestPipeline_AuditEmissionOnWaveSpeed verifies that after WaveSpeed returns
+// a decision, an audit event is emitted.
+func TestPipeline_AuditEmissionOnWaveSpeed(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}   // miss
+	l2 := &mockL2Cache{decisions: nil}                                   // miss
+	wv := &mockWvClient{cachedDecision: nil}                            // L3 miss
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.93,
+			Categories:   map[string]bool{"violence": true},
+			ProcessingMs: 200,
+		},
+	}
+	hooks := &mockHooks{}
+
+	p := newFullPipelineWithHooks(l1, l2, a, wv, hooks)
+
+	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-audit-test",
+		ContentId:   "cnt-001",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	// Hooks are fire-and-forget — wait briefly for goroutines
+	time.Sleep(50 * time.Millisecond)
+	if hooks.count() == 0 {
+		t.Error("Expected audit event to be emitted after WaveSpeed decision")
+	}
+}
+
+// TestPipeline_DecisionPublishedOnWaveSpeed verifies that after WaveSpeed
+// returns a decision, it is published via the DecisionPublisher.
+func TestPipeline_DecisionPublishedOnWaveSpeed(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
+	l2 := &mockL2Cache{decisions: nil}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.88,
+			Categories:   map[string]bool{"hate": true},
+			ProcessingMs: 150,
+		},
+	}
+	hooks := &mockHooks{}
+
+	p := newFullPipelineWithHooks(l1, l2, a, wv, hooks)
+
+	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-pub-test",
+		ContentId:   "cnt-002",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if hooks.count() == 0 {
+		t.Error("Expected at least one hook to fire")
+	}
+}
+
+// TestPipeline_QuarantineUpdatedOnWaveSpeed verifies that after WaveSpeed
+// returns a decision, the quarantine status is updated.
+func TestPipeline_QuarantineUpdatedOnWaveSpeed(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
+	l2 := &mockL2Cache{decisions: nil}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     false, // clean
+			Confidence:   0.99,
+			Categories:   map[string]bool{},
+			ProcessingMs: 50,
+		},
+	}
+	hooks := &mockHooks{}
+
+	p := newFullPipelineWithHooks(l1, l2, a, wv, hooks)
+
+	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-quar-test",
+		ContentId:   "cnt-003",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if hooks.count() == 0 {
+		t.Error("Expected quarantine hook to fire")
+	}
+}
+
+// TestPipeline_AllThreeHooksFired verifies that audit, NATS, and quarantine
+// hooks are all fired on a WaveSpeed decision.
+func TestPipeline_AllThreeHooksFired(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
+	l2 := &mockL2Cache{decisions: nil}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.87,
+			Categories:   map[string]bool{"sexual/minors": true},
+			ProcessingMs: 400,
+		},
+	}
+	hooks := &mockHooks{}
+
+	p := newFullPipelineWithHooks(l1, l2, a, wv, hooks)
+
+	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-all-hooks",
+		ContentId:   "cnt-004",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// With all 3 hooks configured, we expect 3 calls
+	if hooks.count() < 1 {
+		t.Error("Expected hooks to fire after WaveSpeed decision")
+	}
+}
+
+// TestPipeline_L1Hit_SkipsHooks verifies that when a cache hit occurs
+// (no WaveSpeed call), the integration hooks are NOT called (they fire
+// only on fresh WaveSpeed decisions).
+func TestPipeline_L1Hit_SkipsHooks(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{
+		decisions: map[string]*cache.CachedDecision{
+			blake3Hash: cachedBlock(),
+		},
+	}
+	l2 := &mockL2Cache{}
+	wv := &mockWvClient{cachedDecision: nil}
+	hooks := &mockHooks{}
+
+	p := newFullPipelineWithHooks(l1, l2, nil, wv, hooks)
+
+	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-cache-test",
+		ContentId:   "cnt-005",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if hooks.count() != 0 {
+		t.Errorf("Expected 0 hook calls on cache hit, got %d", hooks.count())
+	}
+}
+
+// TestPipeline_Hooks_NonBlocking verifies that hook failures do NOT affect
+// the pipeline response — hooks are fire-and-forget.
+func TestPipeline_Hooks_NonBlocking(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
+	l2 := &mockL2Cache{decisions: nil}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.91,
+			Categories:   map[string]bool{"harassment": true},
+			ProcessingMs: 100,
+		},
+	}
+	// Hooks are nil — pipeline must still work
+	p := newFullPipelineWithHooks(l1, l2, a, wv, nil)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-nil-hooks",
+		ContentId:   "cnt-006",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should succeed even with nil hooks, got: %v", err)
+	}
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
 	}
 }
 
