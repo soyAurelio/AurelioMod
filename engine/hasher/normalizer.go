@@ -3,6 +3,7 @@ package hasher
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/soyAurelio/AurelioMod/engine/media"
 )
@@ -60,8 +61,9 @@ func (n *Normalizer) Normalize(ctx context.Context, input []byte) (*NormalizeRes
 		return nil, fmt.Errorf("normalize: FFmpeg produced 0 bytes of pixel data")
 	}
 
-	// Pass 2: produce JPEG Q85 for storage (separate, not used for hash)
-	jpegBytes, err := n.encodeJPEG(ctx, input)
+	// Pass 2: produce JPEG Q85 for storage (re-encoded from decoded pixels,
+	// NOT raw input — this strips polyglot payloads like JPEG+ZIP).
+	jpegBytes, err := n.encodeJPEG(ctx, rgbPixels)
 	if err != nil {
 		return nil, fmt.Errorf("normalize: encode jpeg: %w", err)
 	}
@@ -89,18 +91,37 @@ func (n *Normalizer) extractPixels(ctx context.Context, input []byte) ([]byte, e
 	}, input)
 }
 
-// encodeJPEG runs FFmpeg (via injected runner) to produce a JPEG Q85 from the normalized input.
+// encodeJPEG produces a JPEG Q85 from already-decoded RGB24 pixel data.
+// This is the anti-polyglot step: by re-encoding FROM decoded pixels (not
+// raw input bytes), any embedded polyglot payload (e.g., ZIP inside JPEG)
+// is irreversibly stripped — only visual pixel data survives.
+//
+// Pixel dimensions are derived from the data: height=480 (fixed by extractPixels),
+// width=len(pixels)/(480*3) bytes per pixel for RGB24.
+//
 // Command:
 //
-//	ffmpeg -i pipe:0 -vf scale=-2:480,format=rgb24 -map_metadata -1
+//	ffmpeg -f rawvideo -pix_fmt rgb24 -s {width}x480 -i pipe:0
 //	       -f image2 -q:v 3 pipe:1
-func (n *Normalizer) encodeJPEG(ctx context.Context, input []byte) ([]byte, error) {
+func (n *Normalizer) encodeJPEG(ctx context.Context, pixels []byte) ([]byte, error) {
+	if len(pixels) == 0 {
+		return nil, fmt.Errorf("encode jpeg: empty pixel buffer")
+	}
+
+	const height = 480
+	const bpp = 3 // RGB24 = 3 bytes per pixel
+	width := len(pixels) / (height * bpp)
+	if width == 0 {
+		return nil, fmt.Errorf("encode jpeg: pixel buffer too small for 480p (got %d bytes)", len(pixels))
+	}
+
 	return n.runner.Run(ctx, []string{
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
+		"-s", strconv.Itoa(width) + "x" + strconv.Itoa(height),
 		"-i", "pipe:0",
-		"-vf", "scale=-2:480,format=rgb24",
-		"-map_metadata", "-1",
 		"-f", "image2",
 		"-q:v", "3",
 		"pipe:1",
-	}, input)
+	}, pixels)
 }
