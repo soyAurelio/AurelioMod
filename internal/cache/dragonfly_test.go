@@ -2,6 +2,7 @@ package cache
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/bits"
 	"testing"
 	"time"
@@ -287,6 +288,90 @@ func TestHammingDistance_Simple(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("Hamming(%016x, %016x) = %d, want %d", tt.a, tt.b, got, tt.want)
 		}
+	}
+}
+
+func TestCacheClient_L2Script_Hit(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := newTestClient(t, mr)
+	ctx := t.Context()
+
+	pHash := uint64(0xDEADBEEF)
+	decision := &CachedDecision{
+		Decision:   aureliomodv1.Decision_DECISION_BLOCK,
+		Confidence: 0.88,
+		Category:   "nsfw",
+		CachedAt:   time.Now().UTC(),
+	}
+
+	err := client.SetL2(ctx, pHash, decision)
+	if err != nil {
+		t.Fatalf("SetL2 error: %v", err)
+	}
+
+	// Query using server-side Lua script
+	results, err := client.GetL2Script(ctx, pHash, 5)
+	if err != nil {
+		t.Fatalf("GetL2Script error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("GetL2Script: expected at least 1 result for exact match")
+	}
+	if results[0].Decision != decision.Decision {
+		t.Errorf("Decision = %v, want %v", results[0].Decision, decision.Decision)
+	}
+}
+
+func TestCacheClient_L2Script_Miss(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := newTestClient(t, mr)
+	ctx := t.Context()
+
+	// Store a far hash
+	_ = client.SetL2(ctx, 0xFFFFFFFFFFFFFFFF, &CachedDecision{
+		Decision:   aureliomodv1.Decision_DECISION_BLOCK,
+		Confidence: 1.0,
+		Category:   "test",
+		CachedAt:   time.Now().UTC(),
+	})
+
+	// Query with very different hash at threshold 1
+	results, err := client.GetL2Script(ctx, 0x0000000000000000, 1)
+	if err != nil {
+		t.Fatalf("GetL2Script error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("GetL2Script: expected 0 results, got %d", len(results))
+	}
+}
+
+func TestCacheClient_L2Script_NearMatch(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := newTestClient(t, mr)
+	ctx := t.Context()
+
+	// Store at varying Hamming distances
+	entries := []uint64{
+		0x0000000000000001, // dist 1
+		0x0000000000000000, // dist 0 (exact)
+		0x000000000000000F, // dist 4
+	}
+	for i, ph := range entries {
+		_ = client.SetL2(ctx, ph, &CachedDecision{
+			Decision:   aureliomodv1.Decision_DECISION_ALLOW,
+			Confidence: 0.90,
+			Category:   fmt.Sprintf("cat-%d", i),
+			CachedAt:   time.Now().UTC(),
+		})
+	}
+
+	// Query for 0 — should find all three within threshold 5
+	results, err := client.GetL2Script(ctx, 0, 5)
+	if err != nil {
+		t.Fatalf("GetL2Script error: %v", err)
+	}
+	if len(results) < 3 {
+		t.Fatalf("GetL2Script: expected 3 results, got %d", len(results))
 	}
 }
 
