@@ -136,8 +136,8 @@ func TestBLAKE3Performance(t *testing.T) {
 }
 
 func TestEmptyNormalize(t *testing.T) {
-	n := NewNormalizer("")
-	_, err := n.Normalize([]byte{})
+	n := NewNormalizer(nil)
+	_, err := n.Normalize(t.Context(), []byte{})
 	if err == nil {
 		t.Fatal("expected error for empty input, got nil")
 	}

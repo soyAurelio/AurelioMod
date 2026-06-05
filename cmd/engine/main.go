@@ -29,8 +29,10 @@ import (
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/audit"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
+	"github.com/soyAurelio/AurelioMod/engine/media"
 	engineNats "github.com/soyAurelio/AurelioMod/engine/nats"
 	"github.com/soyAurelio/AurelioMod/engine/pipeline"
+	"github.com/soyAurelio/AurelioMod/engine/safety"
 	"github.com/soyAurelio/AurelioMod/engine/service"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
@@ -186,8 +188,26 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	})
 	slog.InfoContext(ctx, "cache client created", "addr", cfg.DragonflyAddr)
 
-	// Content normalizer
-	normalizer := hasher.NewNormalizer("ffmpeg")
+	// Content normalizer with nsjail sandbox gate
+	sandboxEnabled := os.Getenv("MEDIA_SANDBOX_ENABLED") != "false" // default: true
+	ffmpegRunner := media.NewNsJailFFmpeg("/usr/bin/nsjail", "/usr/bin/ffmpeg", sandboxEnabled)
+	normalizer := hasher.NewNormalizer(ffmpegRunner)
+	slog.InfoContext(ctx, "content normalizer created",
+		"sandbox", sandboxEnabled,
+	)
+
+	// Safe Browsing URL reputation service
+	sbEnabled := os.Getenv("SAFEBROWSING_ENABLED") != "false" // default: true
+	sbService := safety.NewSafeBrowsingService(safety.SafeBrowsingConfig{
+		RDB:    cacheClient.RDB(), // Access the underlying go-redis client for SETEX caching
+		Enabled: sbEnabled,
+	})
+	if sbEnabled {
+		slog.InfoContext(ctx, "Safe Browsing service created", "cache_ttl", "15m")
+	} else {
+		slog.WarnContext(ctx, "SAFEBROWSING_ENABLED=false — URL safety checks disabled")
+	}
+	_ = sbService // wired for future URL-sourced content pipeline integration
 
 	// WaveSpeed analyzer (optional)
 	var waveSpeed analyzer.Analyzer

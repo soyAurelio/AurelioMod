@@ -29,7 +29,7 @@ import (
 // ContentNormalizer normalizes raw content bytes into decoded RGB24 pixel data.
 // hasher.Normalizer satisfies this interface.
 type ContentNormalizer interface {
-	Normalize(input []byte) (*hasher.NormalizeResult, error)
+	Normalize(ctx context.Context, input []byte) (*hasher.NormalizeResult, error)
 }
 
 // Pipeline orchestrates content analysis through cache layers.
@@ -119,7 +119,7 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 	start := time.Now()
 
 	// Step 1: Normalize raw bytes into RGB24 pixel data
-	normalized, err := p.normalizer.Normalize(req.RawBytes)
+	normalized, err := p.normalizer.Normalize(ctx, req.RawBytes)
 	if err != nil {
 		slog.ErrorContext(ctx, "normalization failed",
 			"error", err,
