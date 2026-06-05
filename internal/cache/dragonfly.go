@@ -63,6 +63,12 @@ func NewCacheClient(cfg CacheClientConfig) *CacheClient {
 	return &CacheClient{rdb: rdb}
 }
 
+// RDB returns the underlying go-redis client for direct operations
+// like SETEX caching by the Safe Browsing service.
+func (c *CacheClient) RDB() *redis.Client {
+	return c.rdb
+}
+
 // redisKeyL1 returns the L1 cache key for a BLAKE3 hex hash.
 func redisKeyL1(blake3Hash string) string {
 	return "l1:" + blake3Hash

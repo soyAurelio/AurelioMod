@@ -157,6 +157,8 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
       OTEL_SERVICE_NAME: "engine"
       PORT: "8080"
+      MEDIA_SANDBOX_ENABLED: "true"
+      SAFEBROWSING_ENABLED: "true"
     depends_on:
       dragonfly:
         condition: service_healthy
@@ -164,6 +166,22 @@ services:
         condition: service_healthy
       weaviate:
         condition: service_healthy
+
+  # === yt-dlp Sidecar (sandboxed URL content fetching) ===
+  yt-dlp:
+    image: jauderho/yt-dlp:2024.12.06
+    container_name: aureliomod-ytdlp
+    restart: unless-stopped
+    command: >
+      --no-progress
+      --print-json
+      --max-redirects 5
+      --no-check-certificates
+    healthcheck:
+      test: ["CMD", "yt-dlp", "--version"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
 
 volumes:
   dragonfly_data:
