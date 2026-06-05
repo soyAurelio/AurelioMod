@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -161,4 +162,29 @@ func waitForServer(t *testing.T, url string, timeout time.Duration) bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
+}
+
+// TestGOMAXPROCS_Clamped verifies that with 1 vCPU the result is 1 (not 0).
+func TestGOMAXPROCS_Clamped(t *testing.T) {
+	result := setGOMAXPROCS(1)
+	if result != 1 {
+		t.Errorf("setGOMAXPROCS(1) = %d, want 1", result)
+	}
+	actual := runtime.GOMAXPROCS(0)
+	if actual != 1 {
+		t.Errorf("GOMAXPROCS after set(1) = %d, want 1", actual)
+	}
+}
+
+// TestGOMAXPROCS_ReservesCore verifies that with 4 vCPUs the Engine
+// reserves one core for FFmpeg, leaving 3 for the Go runtime.
+func TestGOMAXPROCS_ReservesCore(t *testing.T) {
+	result := setGOMAXPROCS(4)
+	if result != 3 {
+		t.Errorf("setGOMAXPROCS(4) = %d, want 3", result)
+	}
+	actual := runtime.GOMAXPROCS(0)
+	if actual != 3 {
+		t.Errorf("GOMAXPROCS after set(4) = %d, want 3", actual)
+	}
 }
