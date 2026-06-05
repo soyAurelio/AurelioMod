@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/audit"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
@@ -35,8 +36,10 @@ import (
 	"github.com/soyAurelio/AurelioMod/engine/safety"
 	"github.com/soyAurelio/AurelioMod/engine/service"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
+	"github.com/soyAurelio/AurelioMod/internal/auth"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
 	internalnats "github.com/soyAurelio/AurelioMod/internal/nats"
+	"github.com/soyAurelio/AurelioMod/internal/paseto"
 	"github.com/soyAurelio/AurelioMod/internal/weaviate"
 	"github.com/soyAurelio/AurelioMod/proto/aureliomod/v1/aureliomodv1connect"
 )
@@ -291,10 +294,26 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	slog.InfoContext(ctx, "pipeline initialized")
 
+	// --- PASETO auth interceptor (gated by PASETO_AUTH_ENABLED) ---
+	var handlerOpts []connect.HandlerOption
+	if os.Getenv("PASETO_AUTH_ENABLED") == "true" {
+		keyHex := os.Getenv("PASETO_SECRET_KEY")
+		if keyHex == "" {
+			return nil, fmt.Errorf("PASETO_AUTH_ENABLED=true requires PASETO_SECRET_KEY")
+		}
+		tm, err := paseto.NewFromHex(keyHex)
+		if err != nil {
+			return nil, fmt.Errorf("paseto auth init: %w", err)
+		}
+		authInterceptor := auth.NewPASETOInterceptor(tm.PublicKey())
+		handlerOpts = append(handlerOpts, connect.WithInterceptors(authInterceptor))
+		slog.InfoContext(ctx, "paseto auth interceptor enabled")
+	}
+
 	// --- ConnectRPC handler ---
 	enforceMIME := os.Getenv("ENFORCE_MIME") == "true"
 	handler := service.NewHandler(pipe, enforceMIME)
-	path, h := aureliomodv1connect.NewContentAnalysisServiceHandler(handler)
+	path, h := aureliomodv1connect.NewContentAnalysisServiceHandler(handler, handlerOpts...)
 	mux.Handle(path, h)
 
 	slog.InfoContext(ctx, "connectrpc handler registered", "path", path)

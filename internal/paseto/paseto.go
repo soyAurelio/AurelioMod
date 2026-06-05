@@ -74,6 +74,11 @@ func (tm *TokenManager) VerifyToken(signed string) (*pasetolib.Token, error) {
 	return token, nil
 }
 
+// PublicKey returns the Ed25519 public key for token verification.
+func (tm *TokenManager) PublicKey() pasetolib.V4AsymmetricPublicKey {
+	return tm.publicKey
+}
+
 // PublicKeyHex returns the hex-encoded public key for distribution.
 func (tm *TokenManager) PublicKeyHex() string {
 	return tm.publicKey.ExportHex()
