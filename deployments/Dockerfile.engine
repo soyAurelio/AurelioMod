@@ -5,8 +5,9 @@
 # Stages:
 #   1. builder   — golang:1.26-alpine  → compile Go binary (CGO_ENABLED=0)
 #   2. ffmpeg    — jrottenberg/ffmpeg  → extract ffmpeg binary
-#   3. health    — busybox:1.37         → extract wget for HEALTHCHECK
-#   4. runtime   — distroless/static    → final minimal image
+#   3. nsjail    — nsjail source build  → static nsjail binary (musl-gcc + make)
+#   4. health    — busybox:1.37         → extract wget for HEALTHCHECK
+#   5. runtime   — distroless/static    → final minimal image
 
 # === Stage 1: Build Go binary ===
 FROM golang:1.26-alpine AS builder
@@ -28,10 +29,26 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # === Stage 2: Extract FFmpeg from official image ===
 FROM jrottenberg/ffmpeg:7.1-ubuntu AS ffmpeg
 
-# === Stage 3: Extract wget for HEALTHCHECK ===
+# === Stage 3: Build nsjail static binary ===
+# nsjail requires musl-gcc for fully static builds compatible with distroless.
+FROM alpine:3.21 AS nsjail
+
+RUN apk add --no-cache \
+    git make musl-dev protobuf-dev protobuf-c-dev \
+    linux-headers build-base g++ bash
+
+WORKDIR /nsjail
+
+# Clone nsjail (pinned commit for deterministic builds)
+RUN git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git .
+
+# Static build with musl — produces a single binary with no shared lib dependencies
+RUN make -j"$(nproc)" && strip nsjail
+
+# === Stage 4: Extract wget for HEALTHCHECK ===
 FROM busybox:1.37 AS health
 
-# === Stage 4: Runtime — Distroless ===
+# === Stage 5: Runtime — Distroless ===
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 
 # Copy CA certificates for HTTPS (WaveSpeed API)
@@ -42,6 +59,9 @@ COPY --from=builder /bin/engine /bin/engine
 
 # Copy FFmpeg binary (pinned 7.1, NOT :latest)
 COPY --from=ffmpeg /usr/bin/ffmpeg /usr/bin/ffmpeg
+
+# Copy nsjail static binary (sandboxed FFmpeg/yt-dlp execution)
+COPY --from=nsjail /nsjail/nsjail /usr/bin/nsjail
 
 # Copy wget for Docker HEALTHCHECK (static binary, no deps)
 COPY --from=health /bin/wget /usr/bin/wget
