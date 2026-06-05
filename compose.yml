@@ -51,7 +51,7 @@ services:
       - "--scheme"
       - "http"
     ports:
-      - "8080:8080"
+      - "8090:8080"
       - "50051:50051"
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
@@ -62,6 +62,7 @@ services:
       QUERY_DEFAULTS_LIMIT: "25"
       LOG_LEVEL: "info"
       RAFT_BOOTSTRAP_EXPECT: "1"
+      CLUSTER_IN_LOCALHOST: "1"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/v1/.well-known/ready"]
       interval: 10s
@@ -139,6 +140,30 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana_data:/var/lib/grafana
+
+  # === Content Analysis Engine (ConnectRPC) ===
+  engine:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.engine
+    container_name: aureliomod-engine
+    ports:
+      - "9090:8080"
+    environment:
+      WAVESPEED_API_KEY: "${WAVESPEED_API_KEY:-}"
+      DRAGONFLY_ADDR: "dragonfly:6379"
+      NATS_URL: "nats:4222"
+      WEAVIATE_ADDR: "http://weaviate:8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
+      OTEL_SERVICE_NAME: "engine"
+      PORT: "8080"
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
 
 volumes:
   dragonfly_data:
