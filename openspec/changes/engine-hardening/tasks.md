@@ -38,24 +38,24 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Sandboxing + URL Safety (PR #2 ~400 lines)
 
-- [ ] **T-006** `engine/media/ffmpeg.go` — `FFmpegRunner` interface + `NsJailFFmpeg{Run(ctx,args,stdin)}` with `--net none`, `/tmp` rw, media ro. Gate: `MEDIA_SANDBOX_ENABLED`. TDD: mock runner table-driven tests. M, T-003.
+- [x] **T-006** `engine/media/ffmpeg.go` — `FFmpegRunner` interface + `NsJailFFmpeg{Run(ctx,args,stdin)}` with `--net none`, `/tmp` rw, media ro. Gate: `MEDIA_SANDBOX_ENABLED`. TDD: mock runner table-driven tests. M, T-003.
 
-- [ ] **T-007** `engine/media/ytdlp.go` — `YtDlpRunner` interface + `NsJailYtDlp{Fetch(ctx,url)}` redirect limit 5, HTTP to sidecar. TDD: mock HTTP transport. M, T-006.
+- [x] **T-007** `engine/media/ytdlp.go` — `YtDlpRunner` interface + `NsJailYtDlp{Fetch(ctx,url)}` redirect limit 5, HTTP to sidecar. TDD: mock HTTP transport. M, T-006.
 
-- [ ] **T-008** `engine/safety/safety.go` — `URLReputationService` interface + `SafeBrowsingService` with DragonflyDB `SETEX` cache (TTL 15m) + `engine/safety/safety_test.go` TDD: clean→pass, malware→block, API timeout→fail-closed, disabled→bypass (spec media-sandbox R3). M, T-005.
+- [x] **T-008** `engine/safety/safety.go` — `URLReputationService` interface + `SafeBrowsingService` with DragonflyDB `SETEX` cache (TTL 15m) + `engine/safety/safety_test.go` TDD: clean→pass, malware→block, API timeout→fail-closed, disabled→bypass (spec media-sandbox R3). M, T-005.
 
-- [ ] **T-009** `engine/hasher/normalizer.go` — inject `FFmpegRunner` into `Normalizer` struct, swap `os/exec` for `runner.Run()`. `cmd/engine/main.go` — wire `NsJailFFmpeg` + `SafeBrowsingService`. TDD: update tests for interface injection. M, T-006, T-008.
+- [x] **T-009** `engine/hasher/normalizer.go` — inject `FFmpegRunner` into `Normalizer` struct, swap `os/exec` for `runner.Run()`. `cmd/engine/main.go` — wire `NsJailFFmpeg` + `SafeBrowsingService`. TDD: update tests for interface injection. M, T-006, T-008.
 
-- [ ] **T-010** `deployments/Dockerfile.engine` — nsjail static build stage (musl-gcc+make). `compose.yml` — yt-dlp sidecar (`jauderho/yt-dlp:latest`). S, T-006, T-007.
+- [x] **T-010** `deployments/Dockerfile.engine` — nsjail static build stage (musl-gcc+make). `compose.yml` — yt-dlp sidecar (`jauderho/yt-dlp:latest`). S, T-006, T-007.
 
 ## Phase 3: Test Hardening + Anti-Polyglot (PR #3 ~300 lines)
 
-- [ ] **T-011** `internal/testutil/containers.go` — `sync.Once` helpers: `StartDragonfly`, `StartNATS`, `StartWeaviate` via testcontainers-go. Self-test verifies container startup. M, T-005.
+- [x] **T-011** `internal/testutil/containers.go` — `sync.Once` helpers: `StartDragonfly`, `StartNATS`, `StartWeaviate` via testcontainers-go. Self-test verifies container startup. M, T-005.
 
-- [ ] **T-012** `internal/cache/integration_test.go` — replace manual ping with `testutil.StartDragonfly()`. TDD: existing tests pass with testcontainers, `-short` skips. S, T-011.
+- [x] **T-012** `internal/cache/integration_test.go` — replace manual ping with `testutil.StartDragonfly()`. TDD: existing tests pass with testcontainers, `-short` skips. S, T-011.
 
-- [ ] **T-013** `engine/pipeline/pipeline_test.go` — `TestMain` using `testutil.StartNATS`/`StartWeaviate`, synctest deadline scenarios. TDD: RED→GREEN flow. M, T-011.
+- [x] **T-013** `engine/pipeline/pipeline_test.go` — `TestMain` using `testutil.StartNATS`/`StartWeaviate`, synctest deadline scenarios. TDD: RED→GREEN flow. M, T-011.
 
-- [ ] **T-014** `engine/hasher/normalizer.go` — change `encodeJPEG` to re-encode from decoded RGB24 pixels (not raw input). TRIANGULATE: JPEG+ZIP polyglot→clean JPEG output (spec media-sandbox R4). S, T-009.
+- [x] **T-014** `engine/hasher/normalizer.go` — change `encodeJPEG` to re-encode from decoded RGB24 pixels (not raw input). TRIANGULATE: JPEG+ZIP polyglot→clean JPEG output (spec media-sandbox R4). S, T-009.
 
-- [ ] **T-015** `engine/media/media_test.go` — sandbox integration tests (build tag `integration`): deadline kill, network block, write denial + `engine/safety/safety_test.go` — cache TTL, DragonflyDB fallback. TDD: spec media-sandbox R1/R4 scenarios. M, T-006, T-008, T-011.
+- [x] **T-015** `engine/media/media_test.go` — sandbox integration tests (build tag `integration`): deadline kill, network block, write denial + `engine/safety/safety_test.go` — cache TTL, DragonflyDB fallback. TDD: spec media-sandbox R1/R4 scenarios. M, T-006, T-008, T-011.
