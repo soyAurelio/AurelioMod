@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"connectrpc.com/connect"
+	"github.com/soyAurelio/AurelioMod/engine/hasher"
 	"github.com/soyAurelio/AurelioMod/engine/pipeline"
 	v1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
 	"github.com/soyAurelio/AurelioMod/proto/aureliomod/v1/aureliomodv1connect"
@@ -20,12 +21,15 @@ var _ aureliomodv1connect.ContentAnalysisServiceHandler = (*Handler)(nil)
 // Handler implements the generated ConnectRPC ContentAnalysisServiceHandler.
 // It validates requests at the edge and delegates content analysis to the Pipeline.
 type Handler struct {
-	pipeline pipeline.Pipeline
+	pipeline    pipeline.Pipeline
+	enforceMIME bool
 }
 
 // NewHandler creates a Handler backed by the given pipeline.
-func NewHandler(p pipeline.Pipeline) *Handler {
-	return &Handler{pipeline: p}
+// When enforceMIME is true, Content-Type vs magic byte validation
+// runs before pipeline execution.
+func NewHandler(p pipeline.Pipeline, enforceMIME bool) *Handler {
+	return &Handler{pipeline: p, enforceMIME: enforceMIME}
 }
 
 // Analyze validates the incoming request and delegates to the analysis pipeline.
@@ -48,6 +52,17 @@ func (h *Handler) Analyze(ctx context.Context, req *connect.Request[v1.AnalyzeRe
 	}
 	if len(msg.RawBytes) == 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("raw_bytes must not be empty"))
+	}
+
+	// MIME validation gate — rejects contradictory Content-Type before
+	// any subprocess is spawned (FFmpeg, WaveSpeed, etc.).
+	if h.enforceMIME {
+		mimeStr := contentTypeToMIME(msg.ContentType)
+		if mimeStr != "" {
+			if err := hasher.ValidateContentType(msg.RawBytes, mimeStr); err != nil {
+				return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			}
+		}
 	}
 
 	slog.DebugContext(ctx, "analyze request received",
@@ -79,4 +94,22 @@ func (h *Handler) Analyze(ctx context.Context, req *connect.Request[v1.AnalyzeRe
 	)
 
 	return connect.NewResponse(resp), nil
+}
+
+// contentTypeToMIME maps the protobuf ContentType enum to a MIME string
+// for comparison against magic-byte detection.
+// Returns empty string for types that don't map cleanly (FINGERPRINT, etc.).
+func contentTypeToMIME(ct v1.ContentType) string {
+	switch ct {
+	case v1.ContentType_CONTENT_TYPE_IMAGE:
+		return "image/jpeg"
+	case v1.ContentType_CONTENT_TYPE_GIF:
+		return "image/gif"
+	case v1.ContentType_CONTENT_TYPE_VIDEO:
+		return "video/mp4"
+	case v1.ContentType_CONTENT_TYPE_AUDIO:
+		return "audio/mpeg"
+	default:
+		return ""
+	}
 }
