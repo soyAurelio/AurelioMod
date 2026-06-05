@@ -66,7 +66,7 @@ type mockNormalizer struct {
 	err    error
 }
 
-func (m *mockNormalizer) Normalize(_ []byte) (*hasher.NormalizeResult, error) {
+func (m *mockNormalizer) Normalize(_ context.Context, _ []byte) (*hasher.NormalizeResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

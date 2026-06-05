@@ -1,9 +1,10 @@
 package hasher
 
 import (
-	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
+
+	"github.com/soyAurelio/AurelioMod/engine/media"
 )
 
 // NormalizeResult holds both the raw pixels (for hashing) and the JPEG bytes (for storage).
@@ -14,16 +15,20 @@ type NormalizeResult struct {
 }
 
 // Normalizer runs FFmpeg to decode, normalize, and optionally re-encode content.
+// Uses an injected FFmpegRunner for sandboxed execution.
 type Normalizer struct {
-	ffmpegPath string
+	runner media.FFmpegRunner
 }
 
-// NewNormalizer creates a Normalizer. Uses "ffmpeg" if path is empty.
-func NewNormalizer(ffmpegPath string) *Normalizer {
-	if ffmpegPath == "" {
-		ffmpegPath = "ffmpeg"
-	}
-	return &Normalizer{ffmpegPath: ffmpegPath}
+// NewNormalizer creates a Normalizer with a sandboxed or direct FFmpeg runner.
+func NewNormalizer(runner media.FFmpegRunner) *Normalizer {
+	return &Normalizer{runner: runner}
+}
+
+// NewNormalizerWithRunner creates a Normalizer with the given FFmpegRunner
+// and an optional fallback path. The path is ignored if runner is non-nil.
+func NewNormalizerWithRunner(runner media.FFmpegRunner, _ string) *Normalizer {
+	return &Normalizer{runner: runner}
 }
 
 // Normalize runs the full normalization pipeline on raw input bytes.
@@ -36,7 +41,8 @@ func NewNormalizer(ffmpegPath string) *Normalizer {
 //  5. Also produce a JPEG Q85 copy (for storage only, NOT for hashing)
 //
 // The RGB pixel data is completely deterministic across FFmpeg versions and CPU architectures.
-func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
+// The injected FFmpegRunner (media.FFmpegRunner) controls sandboxed or direct execution.
+func (n *Normalizer) Normalize(ctx context.Context, input []byte) (*NormalizeResult, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("normalize: empty input")
 	}
@@ -45,7 +51,7 @@ func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
 	mimeType := DetectMIME(input)
 
 	// Pass 1: extract raw RGB24 pixels for hashing
-	rgbPixels, err := n.extractPixels(input)
+	rgbPixels, err := n.extractPixels(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("normalize: extract pixels: %w", err)
 	}
@@ -55,7 +61,7 @@ func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
 	}
 
 	// Pass 2: produce JPEG Q85 for storage (separate, not used for hash)
-	jpegBytes, err := n.encodeJPEG(input)
+	jpegBytes, err := n.encodeJPEG(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("normalize: encode jpeg: %w", err)
 	}
@@ -67,54 +73,34 @@ func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
 	}, nil
 }
 
-// extractPixels runs FFmpeg to decode input and output raw RGB24 pixels.
+// extractPixels runs FFmpeg (via injected runner) to decode input and output raw RGB24 pixels.
 // Command:
 //
 //	ffmpeg -i pipe:0 -vf scale=-2:480,format=rgb24 -map_metadata -1
 //	       -f rawvideo -pix_fmt rgb24 pipe:1
-func (n *Normalizer) extractPixels(input []byte) ([]byte, error) {
-	cmd := exec.Command(n.ffmpegPath,
-		"-i", "pipe:0", // Read from stdin
-		"-vf", "scale=-2:480,format=rgb24", // Resize + force pixel format
-		"-map_metadata", "-1", // Strip all metadata
-		"-f", "rawvideo", // Output format: raw video
-		"-pix_fmt", "rgb24", // Pixel format
-		"pipe:1", // Write to stdout
-	)
-
-	return runFFmpegPipe(cmd, input)
+func (n *Normalizer) extractPixels(ctx context.Context, input []byte) ([]byte, error) {
+	return n.runner.Run(ctx, []string{
+		"-i", "pipe:0",
+		"-vf", "scale=-2:480,format=rgb24",
+		"-map_metadata", "-1",
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
+		"pipe:1",
+	}, input)
 }
 
-// encodeJPEG runs FFmpeg to produce a JPEG Q85 from the normalized input.
+// encodeJPEG runs FFmpeg (via injected runner) to produce a JPEG Q85 from the normalized input.
 // Command:
 //
 //	ffmpeg -i pipe:0 -vf scale=-2:480,format=rgb24 -map_metadata -1
 //	       -f image2 -q:v 3 pipe:1
-func (n *Normalizer) encodeJPEG(input []byte) ([]byte, error) {
-	cmd := exec.Command(n.ffmpegPath,
+func (n *Normalizer) encodeJPEG(ctx context.Context, input []byte) ([]byte, error) {
+	return n.runner.Run(ctx, []string{
 		"-i", "pipe:0",
 		"-vf", "scale=-2:480,format=rgb24",
 		"-map_metadata", "-1",
-		"-f", "image2", // Output format: single image
-		"-q:v", "3", // JPEG quality (2-5 range, 3 ≈ Q85)
+		"-f", "image2",
+		"-q:v", "3",
 		"pipe:1",
-	)
-
-	return runFFmpegPipe(cmd, input)
-}
-
-// runFFmpegPipe executes an FFmpeg command with stdin/stdout pipe I/O.
-func runFFmpegPipe(cmd *exec.Cmd, input []byte) ([]byte, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	cmd.Stdin = bytes.NewReader(input)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg error: %w\nstderr: %s", err, stderr.String())
-	}
-
-	return stdout.Bytes(), nil
+	}, input)
 }
