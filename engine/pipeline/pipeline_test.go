@@ -6,8 +6,10 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
+	"github.com/soyAurelio/AurelioMod/internal/weaviate"
 	v1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
 )
 
@@ -17,6 +19,7 @@ import (
 type mockL1Cache struct {
 	decisions map[string]*cache.CachedDecision
 	simError  error // if set, GetL1 simulates a DB error (returns nil, false)
+	setL1Func func(ctx context.Context, hash string, d *cache.CachedDecision) error
 }
 
 func (m *mockL1Cache) GetL1(_ context.Context, blake3Hash string) (*cache.CachedDecision, bool) {
@@ -27,7 +30,10 @@ func (m *mockL1Cache) GetL1(_ context.Context, blake3Hash string) (*cache.Cached
 	return d, ok
 }
 
-func (m *mockL1Cache) SetL1(_ context.Context, _ string, _ *cache.CachedDecision) error {
+func (m *mockL1Cache) SetL1(ctx context.Context, hash string, d *cache.CachedDecision) error {
+	if m.setL1Func != nil {
+		return m.setL1Func(ctx, hash, d)
+	}
 	return nil
 }
 
@@ -35,6 +41,7 @@ func (m *mockL1Cache) SetL1(_ context.Context, _ string, _ *cache.CachedDecision
 type mockL2Cache struct {
 	decisions []*cache.CachedDecision
 	simError  error
+	setL2Func func(ctx context.Context, phash uint64, d *cache.CachedDecision) error
 }
 
 func (m *mockL2Cache) GetL2(_ context.Context, _ uint64, _ int) ([]*cache.CachedDecision, error) {
@@ -44,7 +51,10 @@ func (m *mockL2Cache) GetL2(_ context.Context, _ uint64, _ int) ([]*cache.Cached
 	return m.decisions, nil
 }
 
-func (m *mockL2Cache) SetL2(_ context.Context, _ uint64, _ *cache.CachedDecision) error {
+func (m *mockL2Cache) SetL2(ctx context.Context, phash uint64, d *cache.CachedDecision) error {
+	if m.setL2Func != nil {
+		return m.setL2Func(ctx, phash, d)
+	}
 	return nil
 }
 
@@ -101,8 +111,9 @@ func cachedAllow() *cache.CachedDecision {
 }
 
 // newTestPipeline creates a pipeline with mock caches and test pixel data.
+// Analyzer and WeaviateClient are nil (L3+WaveSpeed layers skipped).
 func newTestPipeline(l1 *mockL1Cache, l2 *mockL2Cache) Pipeline {
-	return New(l1, l2, &mockNormalizer{pixels: testPixels()})
+	return New(l1, l2, &mockNormalizer{pixels: testPixels()}, nil, nil)
 }
 
 // precomputeHash returns the BLAKE3 hex hash of testPixels() for cache setup.
@@ -301,7 +312,7 @@ func TestPipeline_L1AndL2Error_GracefulDegradation(t *testing.T) {
 func TestPipeline_NormalizeError(t *testing.T) {
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
 	l2 := &mockL2Cache{}
-	p := New(l1, l2, &mockNormalizer{err: errors.New("ffmpeg not found")})
+	p := New(l1, l2, &mockNormalizer{err: errors.New("ffmpeg not found")}, nil, nil)
 
 	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
 		WorkspaceId: "ws-test",
@@ -336,4 +347,269 @@ func TestPipeline_Timeout(t *testing.T) {
 			t.Errorf("CacheLevel = %v, want L1_BLAKE3", resp.CacheLevel)
 		}
 	})
+}
+
+// --- L3 + WaveSpeed mock implementations ---
+
+// mockAnalyzer implements analyzer.Analyzer for pipeline testing.
+type mockAnalyzer struct {
+	result *analyzer.ModerationResult
+	err    error
+}
+
+var _ analyzer.Analyzer = (*mockAnalyzer)(nil)
+
+func (m *mockAnalyzer) Analyze(_ context.Context, _ string, _ string) (*analyzer.ModerationResult, error) {
+	return m.result, m.err
+}
+
+// mockWvClient implements weaviate.WeaviateClient for pipeline testing.
+type mockWvClient struct {
+	cachedDecision *cache.CachedDecision
+	err            error
+	lastIndexed    *cache.CachedDecision
+	lastHash       string
+}
+
+var _ weaviate.WeaviateClient = (*mockWvClient)(nil)
+
+func (m *mockWvClient) SearchSimilar(_ context.Context, _ string, _ float32) (*cache.CachedDecision, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.cachedDecision, nil
+}
+
+func (m *mockWvClient) IndexDecision(_ context.Context, contentHash string, decision *cache.CachedDecision) error {
+	m.lastIndexed = decision
+	m.lastHash = contentHash
+	return nil
+}
+
+// newFullPipeline creates a pipeline with all 5 dependencies for L3/WaveSpeed tests.
+func newFullPipeline(l1 *mockL1Cache, l2 *mockL2Cache, a *mockAnalyzer, wv *mockWvClient) Pipeline {
+	return New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
+}
+
+// --- L3 + WaveSpeed tests ---
+
+// TestPipeline_L3Hit tests: L1 miss → L2 miss → L3 hit from Weaviate.
+func TestPipeline_L3Hit(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
+	l2 := &mockL2Cache{decisions: nil}                                // miss
+	wv := &mockWvClient{
+		cachedDecision: cachedBlock(), // L3 hit
+	}
+	a := &mockAnalyzer{} // not called
+	p := newFullPipeline(l1, l2, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE {
+		t.Errorf("CacheLevel = %v, want L3_WEAVIATE", resp.CacheLevel)
+	}
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_L3Miss_WaveSpeed_Hit tests: L1+L2+L3 all miss → WaveSpeed returns decision.
+func TestPipeline_L3Miss_WaveSpeed_Hit(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
+	l2 := &mockL2Cache{decisions: nil}                                // miss
+	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.93,
+			Categories:   map[string]bool{"violence": true},
+			ProcessingMs: 200,
+		},
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
+		t.Errorf("CacheLevel = %v, want NONE (WaveSpeed fresh analysis)", resp.CacheLevel)
+	}
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
+	}
+	if resp.Confidence != 0.93 {
+		t.Errorf("Confidence = %f, want 0.93", resp.Confidence)
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_WaveSpeed_CleanDecision verifies WaveSpeed "clean" result
+// is stored in all caches (L1, L2, L3 back-population).
+func TestPipeline_WaveSpeed_CleanDecision(t *testing.T) {
+	setL1Called := false
+	setL2Called := false
+
+	l1 := &mockL1Cache{
+		decisions:  map[string]*cache.CachedDecision{},
+		setL1Func:  func(_ context.Context, _ string, _ *cache.CachedDecision) error { setL1Called = true; return nil },
+	}
+	l2 := &mockL2Cache{
+		decisions:  nil,
+		setL2Func:  func(_ context.Context, _ uint64, _ *cache.CachedDecision) error { setL2Called = true; return nil },
+	}
+	wv := &mockWvClient{cachedDecision: nil} // L3 miss
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     false, // clean
+			Confidence:   0.99,
+			Categories:   map[string]bool{},
+			ProcessingMs: 50,
+		},
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if resp.Decision != v1.Decision_DECISION_ALLOW {
+		t.Errorf("Decision = %v, want ALLOW", resp.Decision)
+	}
+	if resp.Confidence != 0.99 {
+		t.Errorf("Confidence = %f, want 0.99", resp.Confidence)
+	}
+
+	// Verify back-population happened
+	if !setL1Called {
+		t.Error("Expected SetL1 to be called for back-population")
+	}
+	if !setL2Called {
+		t.Error("Expected SetL2 to be called for back-population")
+	}
+	if wv.lastIndexed == nil {
+		t.Error("Expected IndexDecision to be called for L3 back-population")
+	}
+}
+
+// TestPipeline_WaveSpeedError_CircuitBreakerOpen tests: WaveSpeed error → pipeline returns error.
+func TestPipeline_WaveSpeedError_CircuitBreakerOpen(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
+	l2 := &mockL2Cache{decisions: nil}                                // miss
+	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
+	a := &mockAnalyzer{
+		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err == nil {
+		t.Fatal("Expected error when WaveSpeed is unavailable, got nil")
+	}
+}
+
+// TestPipeline_L3Unavailable_SkipToWaveSpeed tests: Weaviate unavailable →
+// skip L3, go directly to WaveSpeed.
+func TestPipeline_L3Unavailable_SkipToWaveSpeed(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
+	l2 := &mockL2Cache{decisions: nil}                                // miss
+	wv := &mockWvClient{
+		err: errors.New("weaviate connection refused"), // L3 unavailable
+	}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.88,
+			Categories:   map[string]bool{"hate": true},
+			ProcessingMs: 180,
+		},
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should succeed even with L3 down, got: %v", err)
+	}
+
+	// Should fall through L3 to WaveSpeed
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
+		t.Errorf("CacheLevel = %v, want NONE (WaveSpeed after L3 unavailable)", resp.CacheLevel)
+	}
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_PartialBackPopulationFailure tests: some cache writes fail,
+// pipeline continues — cache population is best-effort per spec.
+func TestPipeline_PartialBackPopulationFailure(t *testing.T) {
+	l1 := &mockL1Cache{
+		decisions: map[string]*cache.CachedDecision{},
+		setL1Func: func(_ context.Context, _ string, _ *cache.CachedDecision) error {
+			return errors.New("DragonflyDB write timeout")
+		},
+	}
+	l2 := &mockL2Cache{
+		decisions: nil,
+		setL2Func: func(_ context.Context, _ uint64, _ *cache.CachedDecision) error { return nil },
+	}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     true,
+			Confidence:   0.91,
+			Categories:   map[string]bool{"harassment": true},
+			ProcessingMs: 300,
+		},
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	// Should NOT return an error — partial failure is logged, not fatal
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should succeed even with partial back-population failure, got: %v", err)
+	}
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK (decision returned despite cache write failures)", resp.Decision)
+	}
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
+		t.Errorf("CacheLevel = %v, want NONE", resp.CacheLevel)
+	}
 }
