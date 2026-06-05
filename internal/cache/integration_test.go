@@ -9,11 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/soyAurelio/AurelioMod/internal/testutil"
 	aureliomodv1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
 )
 
-// TestMain checks DragonflyDB availability before running integration tests.
+// dragonflyTestAddr holds the DragonflyDB address resolved by testcontainers
+// during TestMain. It is set once before tests run.
+var dragonflyTestAddr string
+
+// TestMain starts DragonflyDB via testcontainers before running integration tests.
+// When Docker is unavailable or -short is set, all tests are skipped gracefully.
 func TestMain(m *testing.M) {
 	flag.Parse()
 
@@ -22,22 +27,15 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Default DragonflyDB address from compose.yml (port 6380 mapped to 6379 internally)
-	addr := os.Getenv("DRAGONFLY_ADDR")
-	if addr == "" {
-		addr = "localhost:6380"
-	}
-
-	rdb := redis.NewClient(&redis.Options{Addr: addr})
-	defer rdb.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		// DragonflyDB not available — skip integration tests gracefully
+	// Start DragonflyDB via testcontainers (reused across all cache integration tests)
+	ctx := context.Background()
+	rdb, err := testutil.StartDragonfly(ctx)
+	if err != nil || rdb == nil {
+		// Docker not available or container startup failed — skip tests gracefully
 		os.Exit(0)
 	}
+	dragonflyTestAddr = rdb.Options().Addr
+	rdb.Close()
 
 	os.Exit(m.Run())
 }
@@ -144,8 +142,13 @@ func TestIntegration_L2CacheMiss(t *testing.T) {
 	client.rdb.Del(ctx, "l2:ffffffffffffffff")
 }
 
+// getDragonflyAddr returns the DragonflyDB address set during TestMain.
+// Falls back to env var or default for backwards compatibility.
 func getDragonflyAddr(t *testing.T) string {
 	t.Helper()
+	if dragonflyTestAddr != "" {
+		return dragonflyTestAddr
+	}
 	addr := os.Getenv("DRAGONFLY_ADDR")
 	if addr == "" {
 		addr = "localhost:6380"
