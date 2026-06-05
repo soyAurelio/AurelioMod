@@ -141,6 +141,30 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
 
+  # === Content Analysis Engine (ConnectRPC) ===
+  engine:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.engine
+    container_name: aureliomod-engine
+    ports:
+      - "9090:8080"
+    environment:
+      WAVESPEED_API_KEY: "${WAVESPEED_API_KEY:-}"
+      DRAGONFLY_ADDR: "dragonfly:6379"
+      NATS_URL: "nats:4222"
+      WEAVIATE_ADDR: "http://weaviate:8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
+      OTEL_SERVICE_NAME: "engine"
+      PORT: "8080"
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
+
 volumes:
   dragonfly_data:
   nats_data:
