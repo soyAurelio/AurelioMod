@@ -230,11 +230,31 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	// --- Integration hooks ---
 
-	// Audit emitter (slog JSON → stdout only; Neon/R2 are nil until provisioned)
+	// Audit emitter chain: slog (critical) + Neon DB (best-effort, gated).
+	// R2 cold storage is nil until provisioned.
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	auditEmitter := audit.NewMultiEmitter(auditLogger, nil, nil)
+
+	// Neon DB audit emitter — gated by NEON_AUDIT_ENABLED env var.
+	// When disabled (default), neonStore is nil and MultiEmitter skips it.
+	var neonStore audit.NeonStore
+	if os.Getenv("NEON_AUDIT_ENABLED") == "true" {
+		url := os.Getenv("NEON_DATABASE_URL")
+		if url == "" {
+			slog.WarnContext(ctx, "NEON_AUDIT_ENABLED=true but NEON_DATABASE_URL not set — skipping Neon emitter")
+		} else {
+			ne, err := audit.NewNeonEmitter(ctx, url)
+			if err != nil {
+				slog.WarnContext(ctx, "neon audit emitter init failed", "error", err)
+			} else {
+				neonStore = ne
+				slog.InfoContext(ctx, "neon audit emitter enabled")
+			}
+		}
+	}
+
+	auditEmitter := audit.NewMultiEmitter(auditLogger, neonStore, nil)
 
 	// NATS decision publisher (optional)
 	var decisionHook pipeline.DecisionHook

@@ -44,22 +44,22 @@ func TestFFmpegRunner_MockError(t *testing.T) {
 	}
 }
 
-// TestNsJailFFmpegBuildCmd_NetNone verifies the nsjail command includes --net none
-// to disable all network access for the sandboxed FFmpeg process.
+// TestNsJailFFmpegBuildCmd_NetNone verifies nsjail runs with -N
+// (disable clone_newnet) so Docker's existing network namespace is reused.
 func TestNsJailFFmpegBuildCmd_NetNone(t *testing.T) {
 	runner := NewNsJailFFmpeg("/usr/bin/nsjail", "/usr/bin/ffmpeg", true)
 
 	args := buildNsJailArgs(runner.nsjailPath, runner.ffmpegBinary, []string{"-i", "pipe:0"})
 
-	found := false
+	// -N (disable clone_newnet) must be present — we reuse Docker's network namespace
+	foundN := false
 	for _, a := range args {
-		if a == "--net" {
-			// next arg should be "none"
-			found = true
+		if a == "-N" {
+			foundN = true
 		}
 	}
-	if !found {
-		t.Errorf("nsjail args missing --net flag: got %v", args)
+	if !foundN {
+		t.Errorf("nsjail args missing -N flag (Docker provides net namespace): got %v", args)
 	}
 }
 

@@ -63,14 +63,18 @@ func (n *NsJailFFmpeg) Run(ctx context.Context, args []string, stdin []byte) ([]
 }
 
 // buildNsJailArgs constructs the nsjail command-line arguments for
-// sandboxed FFmpeg execution:
-//   - --net none: no network access
-//   - --cwd /tmp: only writable path
-//   - ffmpeg-binary + ffmpeg-args: the actual FFmpeg command
+// sandboxed FFmpeg execution inside a Docker container.
+// Docker already provides namespace isolation; nsjail handles process limits/rlimits.
 func buildNsJailArgs(nsjailPath, ffmpegBinary string, ffmpegArgs []string) []string {
-	_ = nsjailPath // nsjail is invoked as the command itself, args start after it
+	_ = nsjailPath
 
-	base := []string{"--net", "none", "--cwd", "/tmp", "--"}
+	base := []string{
+		"--disable_clone_newuser", "--disable_clone_newpid",
+		"--disable_clone_newns", "--disable_clone_newipc",
+		"--disable_clone_newuts", "--disable_clone_newcgroup",
+		"-N", // disable clone_newnet (alias for --disable_clone_newnet)
+		"--cwd", "/tmp", "--",
+	}
 	base = append(base, ffmpegBinary)
 	base = append(base, ffmpegArgs...)
 	return base

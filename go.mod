@@ -7,6 +7,7 @@ require (
 	connectrpc.com/connect v1.20.0
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/failsafe-go/failsafe-go v0.9.6
+	github.com/lib/pq v1.12.3
 	github.com/nats-io/nats.go v1.52.0
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/testcontainers/testcontainers-go v0.42.0
