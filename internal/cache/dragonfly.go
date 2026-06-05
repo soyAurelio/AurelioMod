@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,13 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+//go:embed lua/pHash_scan.lua
+var pHashScanScript string
+
+// pHashScan is a go-redis Script that wraps the server-side pHash Hamming scan.
+// It uses EVALSHA for performance after the first execution (SCRIPT LOAD cache).
+var pHashScan = redis.NewScript(pHashScanScript)
 
 // CacheClientConfig holds connection parameters for the DragonflyDB cache client.
 type CacheClientConfig struct {
@@ -173,4 +181,45 @@ func sortCandidates(candidates []l2Candidate) {
 			j--
 		}
 	}
+}
+
+// GetL2Script uses the server-side Lua pHash scan script (EVALSHA) to find
+// cached decisions within hammingThreshold of the query pHash.
+// Results are sorted by Hamming distance (nearest first).
+// Returns empty slice on cache miss (not an error).
+//
+// This is preferred over GetL2 for production use because the Hamming distance
+// computation runs entirely within DragonflyDB, avoiding per-key network round-trips.
+func (c *CacheClient) GetL2Script(ctx context.Context, pHash uint64, hammingThreshold int) ([]*CachedDecision, error) {
+	// Run the Lua script: ARGV[1]=pHash as decimal string, ARGV[2]=max distance
+	// Returns flat array: {dist1, data1, dist2, data2, ...}
+	result, err := pHashScan.Run(ctx, c.rdb, nil,
+		fmt.Sprintf("%d", pHash),
+		fmt.Sprintf("%d", hammingThreshold),
+	).Result()
+	if err != nil {
+		return nil, fmt.Errorf("pHash scan script: %w", err)
+	}
+
+	// The Lua script returns a flat array of alternating distance and data values
+	entries, ok := result.([]any)
+	if !ok || len(entries) == 0 {
+		return nil, nil
+	}
+
+	var decisions []*CachedDecision
+	for i := 0; i+1 < len(entries); i += 2 {
+		dataStr, ok := entries[i+1].(string)
+		if !ok {
+			continue
+		}
+		var d CachedDecision
+		if err := json.Unmarshal([]byte(dataStr), &d); err != nil {
+			slog.WarnContext(ctx, "L2 script deserialization error", "data", dataStr, "error", err)
+			continue
+		}
+		decisions = append(decisions, &d)
+	}
+
+	return decisions, nil
 }
