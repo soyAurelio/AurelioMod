@@ -42,7 +42,7 @@ func (n *Normalizer) Normalize(input []byte) (*NormalizeResult, error) {
 	}
 
 	// Detect MIME type from magic bytes
-	mimeType := detectMIME(input)
+	mimeType := DetectMIME(input)
 
 	// Pass 1: extract raw RGB24 pixels for hashing
 	rgbPixels, err := n.extractPixels(input)
@@ -117,52 +117,4 @@ func runFFmpegPipe(cmd *exec.Cmd, input []byte) ([]byte, error) {
 	}
 
 	return stdout.Bytes(), nil
-}
-
-// detectMIME inspects magic bytes to determine the content type.
-// This is used before normalization to validate that the declared MIME type
-// matches the actual content (polyglot detection).
-func detectMIME(data []byte) string {
-	dlen := len(data)
-	if dlen == 0 {
-		return "application/octet-stream"
-	}
-
-	// JPEG: FF D8 FF (needs 3 bytes)
-	if dlen >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
-		return "image/jpeg"
-	}
-
-	// PNG: 89 50 4E 47 (needs 8 bytes for full header check)
-	if dlen >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-		return "image/png"
-	}
-
-	// GIF: 47 49 46 38 (needs 6 bytes)
-	if dlen >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x38 {
-		return "image/gif"
-	}
-
-	// ZIP-based (polyglot detection): PK (needs 4 bytes)
-	if dlen >= 4 && data[0] == 'P' && data[1] == 'K' {
-		return "application/zip"
-	}
-
-	// Remaining formats need at least 12 bytes
-	if dlen < 12 {
-		return "application/octet-stream"
-	}
-
-	// WebP: 52 49 46 46 ... 57 45 42 50
-	if data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F' &&
-		data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'P' {
-		return "image/webp"
-	}
-
-	// MP4: ... ftyp at offset 4
-	if data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p' {
-		return "video/mp4"
-	}
-
-	return "application/octet-stream"
 }

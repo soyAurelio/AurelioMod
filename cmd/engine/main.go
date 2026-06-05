@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -73,6 +74,20 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// setGOMAXPROCS reserves one logical CPU for FFmpeg subprocesses.
+// It returns the value passed to runtime.GOMAXPROCS.
+// Exported for testing.
+func setGOMAXPROCS(numCPU int) int {
+	n := max(1, numCPU-1)
+	runtime.GOMAXPROCS(n)
+	return n
+}
+
+// init configures runtime settings before main() executes.
+func init() {
+	setGOMAXPROCS(runtime.NumCPU())
+}
+
 func main() {
 	// Structured JSON logger (production default)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -81,6 +96,16 @@ func main() {
 	slog.SetDefault(logger)
 
 	cfg := loadConfig()
+
+	// Start pprof admin server on separate port with PASETO auth
+	if key := os.Getenv("PPROF_ADMIN_KEY"); key != "" {
+		pprofTm, err := newPprofTokenManager(key)
+		if err != nil {
+			slog.Error("pprof token manager init failed", "error", err)
+			os.Exit(1)
+		}
+		go startPprofServer(pprofTm)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -247,7 +272,8 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	slog.InfoContext(ctx, "pipeline initialized")
 
 	// --- ConnectRPC handler ---
-	handler := service.NewHandler(pipe)
+	enforceMIME := os.Getenv("ENFORCE_MIME") == "true"
+	handler := service.NewHandler(pipe, enforceMIME)
 	path, h := aureliomodv1connect.NewContentAnalysisServiceHandler(handler)
 	mux.Handle(path, h)
 

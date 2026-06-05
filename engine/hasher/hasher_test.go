@@ -104,9 +104,9 @@ func TestMIMEDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := detectMIME(tt.data)
+			got := DetectMIME(tt.data)
 			if got != tt.expected {
-				t.Errorf("detectMIME(%x) = %q, want %q", tt.data[:min(len(tt.data), 8)], got, tt.expected)
+				t.Errorf("DetectMIME(%x) = %q, want %q", tt.data[:min(len(tt.data), 8)], got, tt.expected)
 			}
 		})
 	}
