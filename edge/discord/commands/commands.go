@@ -12,6 +12,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
@@ -143,7 +146,7 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 // statusHandler returns a SlashCommandHandler for /status (ephemeral).
 func statusHandler(analysisClient client.AnalysisClient, limiter ratelimit.Limiter, startTime time.Time, logger *slog.Logger) handler.SlashCommandHandler {
 	return func(data discord.SlashCommandInteractionData, e *handler.CommandEvent) error {
-		// Check engine health with a lightweight probe
+		// Check engine health with a connectivity probe (not a full Analyze)
 		engineHealthy := checkEngineHealth(e.Ctx, analysisClient, logger)
 
 		info := StatusInfo{
@@ -170,19 +173,35 @@ func statusHandler(analysisClient client.AnalysisClient, limiter ratelimit.Limit
 	}
 }
 
-// checkEngineHealth probes the Engine with a minimal Analyze request.
+// checkEngineHealth probes Engine connectivity with a TCP dial.
+// Returns true if Engine is reachable (TCP handshake succeeds).
+// This is independent of WaveSpeed rate limiting — we only check
+// that the service is listening.
 func checkEngineHealth(ctx context.Context, analysisClient client.AnalysisClient, logger *slog.Logger) bool {
-	// Use a known-invalid content_id to avoid polluting the cache
-	req := &aureliomodv1.AnalyzeRequest{
-		WorkspaceId:    "_health_check",
-		ContentId:      fmt.Sprintf("health:%d", time.Now().UnixNano()),
-		ContentType:    aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL,
-		SourcePlatform: aureliomodv1.SourcePlatform_SOURCE_PLATFORM_DISCORD,
-		RawBytes:       []byte("https://healthcheck.local"),
+	engineURL := os.Getenv("ENGINE_URL")
+	if engineURL == "" {
+		engineURL = "http://engine:8080"
+	}
+	host := engineURL
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
+	// Add default port if missing
+	if !strings.Contains(host, ":") {
+		host = host + ":80"
 	}
 
-	_, err := analysisClient.Analyze(ctx, req)
-	return err == nil
+	d := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", host)
+	if err != nil {
+		logger.DebugContext(ctx, "engine_health_probe_failed",
+			slog.String("event", "engine_health_probe_failed"),
+			slog.String("host", host),
+			slog.String("error", err.Error()),
+		)
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // configHandler returns a SlashCommandHandler for /config subcommands.
