@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -107,6 +108,10 @@ func main() {
 	// Wire event listeners.
 	disgoClient.AddEventListeners(
 		bot.NewListenerFunc(func(event bot.Event) {
+			logger.InfoContext(ctx, "gateway event received",
+				slog.String("event", "gateway_event"),
+				slog.String("event_type", fmt.Sprintf("%T", event)),
+			)
 			switch e := event.(type) {
 			case *events.MessageCreate:
 				if l.OnMessageCreate(e) {
