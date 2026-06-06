@@ -139,8 +139,8 @@ func TestFormatModerateReply_BLOCK(t *testing.T) {
 	if !strings.Contains(result, "violence_graphic") {
 		t.Error("BLOCK reply should contain block reason")
 	}
-	if !strings.Contains(result, "https://example.com/bad.jpg") {
-		t.Error("BLOCK reply should contain URL")
+	if strings.Contains(result, "https://example.com/bad.jpg") {
+		t.Error("BLOCK reply should NOT contain URL (privacy)")
 	}
 	if !strings.Contains(result, "94") {
 		t.Error("BLOCK reply should contain confidence")
@@ -156,8 +156,8 @@ func TestFormatModerateReply_ALLOW(t *testing.T) {
 	if !strings.Contains(result, "ALLOWED") {
 		t.Error("ALLOW reply should contain 'ALLOWED'")
 	}
-	if !strings.Contains(result, "https://example.com/ok.jpg") {
-		t.Error("ALLOW reply should contain URL")
+	if strings.Contains(result, "https://example.com/ok.jpg") {
+		t.Error("ALLOW reply should NOT contain URL (privacy)")
 	}
 	if strings.Contains(result, "Reason") {
 		t.Error("ALLOW reply should NOT contain 'Reason'")

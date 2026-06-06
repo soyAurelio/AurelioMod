@@ -184,8 +184,8 @@ func TestEnforceDecision_ALLOW_noop(t *testing.T) {
 	}
 }
 
-func TestEnforceDecision_QUEUED_fallsBackToBlock(t *testing.T) {
-	// Scenario: QUEUED decision → delete message + "pending_analysis" reason.
+func TestEnforceDecision_QUEUED_isNoop(t *testing.T) {
+	// Scenario: QUEUED decision → no action (content pending analysis, don't blame user).
 	ctx := t.Context()
 	channelID, messageID, authorID := testSnowflakes()
 	msg := testMessage(channelID, messageID, authorID)
@@ -200,25 +200,19 @@ func TestEnforceDecision_QUEUED_fallsBackToBlock(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify delete was called
-	if len(mock.deleteCalls) != 1 {
-		t.Fatalf("expected 1 delete call for QUEUED, got %d", len(mock.deleteCalls))
+	// Verify NO delete was called (QUEUED is not a block)
+	if len(mock.deleteCalls) != 0 {
+		t.Errorf("expected 0 delete calls for QUEUED, got %d", len(mock.deleteCalls))
 	}
 
-	// Verify DM contains "pending_analysis"
-	if len(mock.msgCalls) == 0 {
-		t.Fatal("QUEUED should send DM with pending_analysis reason")
-	}
-	if !strings.Contains(mock.msgCalls[0].content, "pending_analysis") {
-		t.Errorf("QUEUED DM should contain 'pending_analysis', got: %s", mock.msgCalls[0].content)
+	// Verify NO DM was sent
+	if len(mock.msgCalls) != 0 {
+		t.Errorf("QUEUED should NOT send DM, got %d calls", len(mock.msgCalls))
 	}
 
-	// Verify audit event has QUEUED decision with pending_analysis reason
-	if len(emitter.events) != 1 {
-		t.Fatalf("expected 1 audit event for QUEUED, got %d", len(emitter.events))
-	}
-	if emitter.events[0].BlockReason != "pending_analysis" {
-		t.Errorf("QUEUED audit block_reason: want pending_analysis, got %s", emitter.events[0].BlockReason)
+	// Verify NO audit event for noop
+	if len(emitter.events) != 0 {
+		t.Errorf("expected 0 audit events for QUEUED noop, got %d", len(emitter.events))
 	}
 }
 
