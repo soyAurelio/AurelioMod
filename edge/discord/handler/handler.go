@@ -83,24 +83,22 @@ func (h *Handler) EnforceDecision(ctx context.Context, msg *discord.Message, dec
 		return nil
 	}
 
-	effectiveReason := blockReason
-
 	switch decision {
 	case aureliomodv1.Decision_DECISION_BLOCK:
 		// Use the provided block_reason.
 	case aureliomodv1.Decision_DECISION_ALLOW:
 		return nil
 	case aureliomodv1.Decision_DECISION_QUEUED:
-		effectiveReason = "pending_analysis"
+		// Content pending analysis — don't block yet, don't DM.
+		// The user will be notified if WaveSpeed later determines it's harmful.
+		return nil
 	default:
-		// Unknown decisions: log and fall through to BLOCK behavior.
+		// Unknown decisions: log and skip (don't block by default).
 		h.logger.WarnContext(ctx, "unknown_decision",
 			slog.String("event", "unknown_decision"),
 			slog.Int("decision", int(decision)),
 		)
-		if effectiveReason == "" {
-			effectiveReason = "unknown_decision"
-		}
+		return nil
 	}
 
 	start := time.Now()
@@ -117,12 +115,12 @@ func (h *Handler) EnforceDecision(ctx context.Context, msg *discord.Message, dec
 	}
 
 	// DM the author with the block reason (best-effort).
-	h.sendDM(ctx, msg.Author.ID, effectiveReason)
+	h.sendDM(ctx, msg.Author.ID, blockReason)
 
 	elapsed := time.Since(start).Milliseconds()
 
 	// Emit audit event.
-	h.emitAudit(ctx, msg, effectiveReason, elapsed)
+	h.emitAudit(ctx, msg, blockReason, elapsed)
 
 	return nil
 }

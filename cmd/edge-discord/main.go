@@ -184,6 +184,14 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 		return // dropped
 	}
 
+	logger.InfoContext(ctx, "processing message",
+		slog.String("event", "processing_message"),
+		slog.String("message_id", event.Message.ID.String()),
+		slog.String("content", event.Message.Content),
+		slog.Int("num_attachments", len(event.Message.Attachments)),
+		slog.Int("num_embeds", len(event.Message.Embeds)),
+	)
+
 	var rawBytes []byte
 	contentType := aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL
 
@@ -198,7 +206,7 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 		}
 	}
 	for _, url := range urlsToTry {
-		logger.DebugContext(ctx, "checking attachment",
+		logger.InfoContext(ctx, "checking attachment for download",
 			slog.String("event", "checking_attachment"),
 			slog.String("url", url),
 			slog.Bool("is_cdn", listener.IsDiscordCDN(url)),

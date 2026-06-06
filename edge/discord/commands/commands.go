@@ -287,32 +287,24 @@ func decisionDisplay(decision aureliomodv1.Decision) string {
 }
 
 // FormatModerateReply builds the human-readable response for /moderate.
+// Does NOT include the user's URL for privacy.
 func FormatModerateReply(resp ModerateResponse) string {
 	switch resp.Decision {
 	case "BLOCK":
 		return fmt.Sprintf(
-			"🔴 **Content BLOCKED**\nURL: %s\nReason: %s\nConfidence: %.0f%%",
-			resp.URL, resp.BlockReason, resp.Confidence*100,
+			"🔴 **Content BLOCKED**\n**Reason**: %s\n**Confidence**: %.0f%%",
+			resp.BlockReason, resp.Confidence*100,
 		)
 	case "ALLOW":
-		return fmt.Sprintf(
-			"🟢 **Content ALLOWED**\nURL: %s",
-			resp.URL,
-		)
+		return "🟢 **Content ALLOWED**"
 	case "QUEUED":
-		return fmt.Sprintf(
-			"⏳ **Analysis QUEUED**\nURL: %s\nYour content is pending analysis.",
-			resp.URL,
-		)
+		return "⏳ **Analysis QUEUED**\nYour content is pending analysis."
 	case "ERROR":
-		return fmt.Sprintf(
-			"⚠️ **Analysis ERROR**\nURL: %s\nThe analysis service encountered an error. Please try again.",
-			resp.URL,
-		)
+		return "⚠️ **Analysis ERROR**\nThe analysis service encountered an error. Please try again."
 	default:
 		return fmt.Sprintf(
-			"❓ **Unknown Decision**\nURL: %s\nDecision: %s",
-			resp.URL, resp.Decision,
+			"❓ **Unknown Decision**\nDecision: %s",
+			resp.Decision,
 		)
 	}
 }
