@@ -59,7 +59,7 @@ var _ AnalysisClient = (*client)(nil)
 // a 5-second HTTP timeout, and logs circuit_breaker_open when the breaker trips.
 func NewClient(engineURL string, logger *slog.Logger) AnalysisClient {
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 30 * time.Second,
 	}
 	raw := aureliomodv1connect.NewContentAnalysisServiceClient(
 		httpClient,
