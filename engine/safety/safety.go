@@ -1,4 +1,4 @@
-// Package safety provides URL reputation checking via Google Safe Browsing v4
+// Package safety provides URL reputation checking via Google Web Risk API v1
 // with DragonflyDB caching to avoid repeated API calls.
 package safety
 
@@ -7,9 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
+	webrisk "cloud.google.com/go/webrisk/apiv1"
+	webriskpb "cloud.google.com/go/webrisk/apiv1/webriskpb"
+	"github.com/googleapis/gax-go/v2"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/api/option"
 )
 
 // Sentinel errors for URL reputation outcomes.
@@ -17,7 +22,7 @@ var (
 	// ErrMaliciousURL indicates the URL is known malicious (malware, phishing, etc.).
 	ErrMaliciousURL = errors.New("URL is malicious")
 
-	// ErrServiceUnavailable indicates the Safe Browsing API is unreachable.
+	// ErrServiceUnavailable indicates the Web Risk API is unreachable.
 	// The system fails-closed for safety.
 	ErrServiceUnavailable = errors.New("URL safety check unavailable")
 )
@@ -30,59 +35,101 @@ type URLReputationService interface {
 }
 
 // Compile-time interface check.
-var _ URLReputationService = (*SafeBrowsingService)(nil)
+var _ URLReputationService = (*WebRiskService)(nil)
 
-// SafeBrowsingService queries Google Safe Browsing v4 for URL reputation,
-// caching results in DragonflyDB with a configurable TTL.
-type SafeBrowsingService struct {
-	rdb       *redis.Client
-	enabled   bool
-	cacheTTL  time.Duration
+// lookupClient abstracts the Web Risk API call for testability.
+// webrisk.Client satisfies this interface directly.
+type lookupClient interface {
+	SearchUris(ctx context.Context, req *webriskpb.SearchUrisRequest,
+		opts ...gax.CallOption) (*webriskpb.SearchUrisResponse, error)
 }
 
-// SafeBrowsingConfig holds configuration for the Safe Browsing service.
-type SafeBrowsingConfig struct {
+// WebRiskService queries Google Web Risk API v1 for URL reputation,
+// caching results in DragonflyDB with a configurable TTL.
+type WebRiskService struct {
+	rdb      *redis.Client
+	client   lookupClient
+	enabled  bool
+	cacheTTL time.Duration
+}
+
+// WebRiskConfig holds configuration for the Web Risk service.
+type WebRiskConfig struct {
 	// RDB is the DragonflyDB client for caching lookups.
 	RDB *redis.Client
+
+	// Client is the Web Risk API client. If nil, one is auto-created via
+	// newWebRiskClient using ADC or WEBRISK_API_KEY env var.
+	Client lookupClient
 
 	// Enabled controls whether URL checks are performed.
 	// When false, all checks are bypassed.
 	Enabled bool
 
-	// CacheTTL is the expiration time for cached lookup results.
+	// CacheTTL is the default expiration time for cached lookup results
+	// when the API response does not provide an expireTime.
 	// Default: 15 minutes.
 	CacheTTL time.Duration
 }
 
-// NewSafeBrowsingService creates a Safe Browsing service with DragonflyDB caching.
-func NewSafeBrowsingService(cfg SafeBrowsingConfig) *SafeBrowsingService {
+// NewWebRiskService creates a Web Risk service with DragonflyDB caching.
+// If cfg.Client is nil and cfg.Enabled is true, a client is auto-created
+// via newWebRiskClient using ADC (default) or WEBRISK_API_KEY env var
+// (fallback). When client creation fails, an error is returned to enable
+// fail-fast startup detection.
+//
+// If cfg.Enabled is false, no client is needed — the service bypasses
+// all URL checks.
+func NewWebRiskService(ctx context.Context, cfg WebRiskConfig) (*WebRiskService, error) {
 	ttl := cfg.CacheTTL
 	if ttl <= 0 {
 		ttl = 15 * time.Minute
 	}
 
-	return &SafeBrowsingService{
+	client := cfg.Client
+	if client == nil && cfg.Enabled {
+		var err error
+		client, err = newWebRiskClient(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("webrisk client creation: %w", err)
+		}
+		if client == nil {
+			return nil, errors.New("webrisk client creation returned nil")
+		}
+	}
+
+	return &WebRiskService{
 		rdb:      cfg.RDB,
+		client:   client,
 		enabled:  cfg.Enabled,
 		cacheTTL: ttl,
-	}
+	}, nil
 }
 
-// CheckURL verifies the URL against Google Safe Browsing v4.
+// newWebRiskClient creates a Web Risk API client.
+// Prefers explicit WEBRISK_API_KEY env var; falls back to ADC.
+func newWebRiskClient(ctx context.Context) (lookupClient, error) {
+	if key := os.Getenv("WEBRISK_API_KEY"); key != "" {
+		return webrisk.NewClient(ctx, option.WithAPIKey(key))
+	}
+	return webrisk.NewClient(ctx)
+}
+
+// CheckURL verifies the URL against Google Web Risk API v1.
 // Results are cached in DragonflyDB via SETEX to avoid repeated API calls.
 //
-// Fail-closed: if the Safe Browsing API is unreachable, the URL is rejected
+// Fail-closed: if the Web Risk API is unreachable, the URL is rejected
 // with ErrServiceUnavailable. This prevents malicious content from bypassing
 // the check when the API is down.
-func (s *SafeBrowsingService) CheckURL(ctx context.Context, url string) error {
+func (s *WebRiskService) CheckURL(ctx context.Context, url string) error {
 	if !s.enabled {
-		slog.WarnContext(ctx, "Safe Browsing disabled — bypassing URL check",
+		slog.WarnContext(ctx, "Web Risk disabled — bypassing URL check",
 			"url", url,
 		)
 		return nil
 	}
 
-	cacheKey := "safebrowsing:" + url
+	cacheKey := "webrisk:" + url
 
 	// Check DragonflyDB cache first
 	if s.rdb != nil {
@@ -90,64 +137,69 @@ func (s *SafeBrowsingService) CheckURL(ctx context.Context, url string) error {
 		if err == nil {
 			switch cached {
 			case "safe":
-				slog.DebugContext(ctx, "Safe Browsing cache hit — safe", "url", url)
+				slog.DebugContext(ctx, "Web Risk cache hit — safe", "url", url)
 				return nil
 			case "malicious":
-				slog.WarnContext(ctx, "Safe Browsing cache hit — malicious", "url", url)
+				slog.WarnContext(ctx, "Web Risk cache hit — malicious", "url", url)
 				return ErrMaliciousURL
 			}
 		}
 		// Cache miss or error → proceed to API query
 	}
 
-	// Perform the actual Safe Browsing lookup.
-	// The API call is abstracted behind the interface via a pluggable transport.
-	// Integration with google/safebrowsing v4 happens at construction time.
-	result, err := s.lookup(ctx, url)
+	// Perform the actual Web Risk lookup.
+	threat, err := s.searchUris(ctx, url)
 	if err != nil {
-		slog.ErrorContext(ctx, "Safe Browsing API unreachable — failing closed",
+		slog.ErrorContext(ctx, "Web Risk API unreachable — failing closed",
 			"url", url, "error", err,
 		)
 		return ErrServiceUnavailable
 	}
 
-	// Cache the result
-	if s.rdb != nil {
-		cacheVal := "safe"
-		if result != nil {
-			cacheVal = "malicious"
-		}
-		if setErr := s.rdb.SetEx(ctx, cacheKey, cacheVal, s.cacheTTL).Err(); setErr != nil {
-			slog.WarnContext(ctx, "Safe Browsing cache write failed", "url", url, "error", setErr)
+	// Compute cache TTL from server expireTime, capped at 24h.
+	ttl := s.cacheTTL
+	if threat != nil && threat.ExpireTime != nil {
+		if serverTTL := time.Until(threat.ExpireTime.AsTime()); serverTTL > 0 {
+			ttl = min(serverTTL, 24*time.Hour)
 		}
 	}
 
-	if result != nil {
+	// Cache the result
+	if s.rdb != nil {
+		cacheVal := "safe"
+		if threat != nil {
+			cacheVal = "malicious"
+		}
+		if setErr := s.rdb.SetEx(ctx, cacheKey, cacheVal, ttl).Err(); setErr != nil {
+			slog.WarnContext(ctx, "Web Risk cache write failed", "url", url, "error", setErr)
+		}
+	}
+
+	if threat != nil {
 		return ErrMaliciousURL
 	}
 
 	return nil
 }
 
-// lookup performs the actual Safe Browsing API query.
-// This is a placeholder that will be integrated with google/safebrowsing v4
-// when the API key is available. For now, it returns nil (safe) to avoid
-// blocking development.
-func (s *SafeBrowsingService) lookup(ctx context.Context, url string) (error, error) {
-	// TODO: Integrate with google/safebrowsing v4 API
-	// The google/safebrowsing client requires OAuth2 credentials.
-	// For now, log that a lookup would have been performed.
-	slog.DebugContext(ctx, "Safe Browsing lookup triggered (integration pending)",
-		"url", url,
-	)
-
-	// Return nil threat + nil API error = safe, no API error
-	// This is a development placeholder — in production, the safebrowsing
-	// client will be injected via constructor.
-	return fmt.Errorf("Safe Browsing API not yet integrated — implement lookup with google/safebrowsing v4"), nil
+// searchUris calls the Web Risk v1 uris.search method and returns the threat
+// info if the URL is classified as malicious. Returns nil threat for clean URLs.
+func (s *WebRiskService) searchUris(ctx context.Context, url string) (*webriskpb.SearchUrisResponse_ThreatUri, error) {
+	resp, err := s.client.SearchUris(ctx, &webriskpb.SearchUrisRequest{
+		Uri: url,
+		ThreatTypes: []webriskpb.ThreatType{
+			webriskpb.ThreatType_MALWARE,
+			webriskpb.ThreatType_SOCIAL_ENGINEERING,
+			webriskpb.ThreatType_UNWANTED_SOFTWARE,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetThreat(), nil
 }
 
-// redisSafeBrowsingKey returns the cache key for a URL lookup.
-func redisSafeBrowsingKey(url string) string {
-	return "safebrowsing:" + url
+// redisWebRiskKey returns the cache key for a URL lookup.
+func redisWebRiskKey(url string) string {
+	return "webrisk:" + url
 }

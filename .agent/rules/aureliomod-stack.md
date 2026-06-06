@@ -53,7 +53,7 @@
 | Componente | Tecnología | Nota |
 |---|---|---|
 | Pagos | **Stripe** | Webhooks, suscripciones |
-| URL Safety | **Google Safe Browsing API** | Verificación pre-yt-dlp |
+| URL Safety | **Google Web Risk API v1** | Verificación pre-yt-dlp |
 | Media Processing | **FFmpeg** + **yt-dlp** | Sandboxed (firejail/nsjail) |
 
 ---

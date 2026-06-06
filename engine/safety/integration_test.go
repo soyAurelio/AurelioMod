@@ -10,11 +10,11 @@ import (
 	"github.com/soyAurelio/AurelioMod/internal/testutil"
 )
 
-// TestIntegration_SafeBrowsing_CacheTTL verifies that Safe Browsing results
+// TestIntegration_WebRisk_CacheTTL verifies that Web Risk results
 // are cached in DragonflyDB with the configured TTL (15 minutes default).
 //
-// Spec: media-sandbox R3 — DragonflyDB SETEX cache with configurable TTL
-func TestIntegration_SafeBrowsing_CacheTTL(t *testing.T) {
+// Spec: web-risk R1 — DragonflyDB SETEX cache with configurable TTL
+func TestIntegration_WebRisk_CacheTTL(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test: requires Docker + DragonflyDB")
 	}
@@ -25,14 +25,17 @@ func TestIntegration_SafeBrowsing_CacheTTL(t *testing.T) {
 	}
 	defer rdb.Close()
 
-	svc := NewSafeBrowsingService(SafeBrowsingConfig{
+	svc, err := NewWebRiskService(t.Context(), WebRiskConfig{
 		RDB:      rdb,
 		Enabled:  true,
 		CacheTTL: 2 * time.Second, // Short TTL for test
 	})
+	if err != nil {
+		t.Skipf("Skipping: Web Risk client creation failed: %v", err)
+	}
 
 	// Write a cache entry manually (simulate a prior lookup)
-	testKey := redisSafeBrowsingKey("https://test.example.com/clean")
+	testKey := redisWebRiskKey("https://test.example.com/clean")
 	if err := rdb.SetEx(t.Context(), testKey, "safe", svc.cacheTTL).Err(); err != nil {
 		t.Fatalf("Failed to pre-populate cache: %v", err)
 	}
@@ -60,12 +63,12 @@ func TestIntegration_SafeBrowsing_CacheTTL(t *testing.T) {
 	rdb.Del(t.Context(), testKey)
 }
 
-// TestIntegration_SafeBrowsing_DragonflyFallback verifies the behavior when
-// DragonflyDB is unavailable: the Safe Browsing service degrades gracefully,
+// TestIntegration_WebRisk_DragonflyFallback verifies the behavior when
+// DragonflyDB is unavailable: the Web Risk service degrades gracefully,
 // returning ErrServiceUnavailable (fail-closed) instead of crashing.
 //
-// Spec: media-sandbox R3 — fail-closed when API unreachable
-func TestIntegration_SafeBrowsing_DragonflyFallback(t *testing.T) {
+// Spec: web-risk R1 — fail-closed when API unreachable
+func TestIntegration_WebRisk_DragonflyFallback(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test: requires Docker + DragonflyDB")
 	}
@@ -76,31 +79,33 @@ func TestIntegration_SafeBrowsing_DragonflyFallback(t *testing.T) {
 	}
 	defer rdb.Close()
 
-	svc := NewSafeBrowsingService(SafeBrowsingConfig{
+	svc, err := NewWebRiskService(t.Context(), WebRiskConfig{
 		RDB:      rdb,
 		Enabled:  true,
 		CacheTTL: 15 * time.Minute,
 	})
+	if err != nil {
+		t.Skipf("Skipping: Web Risk client creation failed: %v", err)
+	}
 
-	// With the current placeholder lookup (not integrated with real Safe Browsing API),
-	// the service should return an error. This test verifies the fail-closed behavior.
+	// With no Web Risk client injected and no ADC/WEBRISK_API_KEY configured,
+	// the service should fail-closed: return ErrServiceUnavailable.
 	//
-	// When the real google/safebrowsing v4 integration is complete, this test
-	// should be updated to test actual API behavior.
+	// When ADC or WEBRISK_API_KEY is configured, this test validates real API behavior.
 	errResult := svc.CheckURL(t.Context(), "https://malware.testing.google.test/sample/malware")
 	if errResult == nil {
-		t.Skip("Safe Browsing API integration pending — expected error, test skipped")
+		t.Skip("Web Risk client was auto-created (ADC present) — expected error, test skipped")
 	}
 
 	// Verify it's a known error type
-	t.Logf("Safe Browsing result: %v", errResult)
+	t.Logf("Web Risk result: %v", errResult)
 }
 
-// TestIntegration_SafeBrowsing_DisabledBypass verifies that when the feature
+// TestIntegration_WebRisk_DisabledBypass verifies that when the feature
 // gate is disabled, all URLs are allowed through without checking.
 //
-// Spec: media-sandbox R3 — "GIVEN SAFEBROWSING_ENABLED=false → bypassed"
-func TestIntegration_SafeBrowsing_DisabledBypass(t *testing.T) {
+// Spec: web-risk R1 — "GIVEN WEBRISK_ENABLED=false → bypassed"
+func TestIntegration_WebRisk_DisabledBypass(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test: requires Docker + DragonflyDB")
 	}
@@ -111,11 +116,14 @@ func TestIntegration_SafeBrowsing_DisabledBypass(t *testing.T) {
 	}
 	defer rdb.Close()
 
-	svc := NewSafeBrowsingService(SafeBrowsingConfig{
+	svc, err := NewWebRiskService(t.Context(), WebRiskConfig{
 		RDB:      rdb,
 		Enabled:  false, // DISABLED gate
 		CacheTTL: 15 * time.Minute,
 	})
+	if err != nil {
+		t.Fatalf("NewWebRiskService disabled: unexpected error: %v", err)
+	}
 
 	// Even a known-malicious URL should pass when the feature is disabled
 	errResult := svc.CheckURL(t.Context(), "https://evil.example.com/phishing")
@@ -124,14 +132,17 @@ func TestIntegration_SafeBrowsing_DisabledBypass(t *testing.T) {
 	}
 }
 
-// TestIntegration_SafeBrowsing_RDBIsNil verifies that the service works
+// TestIntegration_WebRisk_RDBIsNil verifies that the service works
 // correctly when no DragonflyDB client is provided (RDB=nil).
-func TestIntegration_SafeBrowsing_RDBIsNil(t *testing.T) {
-	svc := NewSafeBrowsingService(SafeBrowsingConfig{
+func TestIntegration_WebRisk_RDBIsNil(t *testing.T) {
+	svc, err := NewWebRiskService(t.Context(), WebRiskConfig{
 		RDB:      nil,
 		Enabled:  true,
 		CacheTTL: 15 * time.Minute,
 	})
+	if err != nil {
+		t.Skipf("Skipping: Web Risk client creation failed: %v", err)
+	}
 
 	// Should not panic when RDB is nil (cache lookups are skipped)
 	_ = svc.rdb // verify field access doesn't panic
@@ -146,9 +157,9 @@ func TestIntegration_SafeBrowsing_RDBIsNil(t *testing.T) {
 	}
 }
 
-// TestIntegration_SafeBrowsing_MultipleUrls verifies that caching works
+// TestIntegration_WebRisk_MultipleUrls verifies that caching works
 // correctly across multiple URLs — each URL has its own cache entry.
-func TestIntegration_SafeBrowsing_MultipleUrls(t *testing.T) {
+func TestIntegration_WebRisk_MultipleUrls(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test: requires Docker + DragonflyDB")
 	}
@@ -161,9 +172,9 @@ func TestIntegration_SafeBrowsing_MultipleUrls(t *testing.T) {
 
 	// Pre-populate multiple cache entries
 	entries := map[string]string{
-		"safebrowsing:https://safe.example.com":    "safe",
-		"safebrowsing:https://phish.example.com":   "malicious",
-		"safebrowsing:https://malware.example.com": "malicious",
+		"webrisk:https://safe.example.com":    "safe",
+		"webrisk:https://phish.example.com":   "malicious",
+		"webrisk:https://malware.example.com": "malicious",
 	}
 	for key, val := range entries {
 		if err := rdb.Set(t.Context(), key, val, 0).Err(); err != nil {

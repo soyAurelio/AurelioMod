@@ -60,7 +60,7 @@ COPY --from=nsjail /nsjail/nsjail /usr/bin/nsjail
 
 # Copy protobuf shared libraries required by nsjail
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libprotobuf32t64 libnl-3-200 libnl-route-3-200 && rm -rf /var/lib/apt/lists/*
+    libprotobuf32t64 libnl-3-200 libnl-route-3-200 ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Copy wget for Docker HEALTHCHECK
 COPY --from=health /bin/wget /usr/bin/wget

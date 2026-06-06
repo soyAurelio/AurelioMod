@@ -13,6 +13,7 @@
 //	WEAVIATE_ADDR            — Weaviate HTTP base URL (default: http://localhost:8090)
 //	OTEL_EXPORTER_OTLP_ENDPOINT — OTLP collector endpoint (default: none = noop)
 //	OTEL_SERVICE_NAME        — OpenTelemetry service name (default: engine)
+//	WEBRISK_API_KEY          — Google Web Risk API key (optional, ADC fallback)
 package main
 
 import (
@@ -199,18 +200,21 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		"sandbox", sandboxEnabled,
 	)
 
-	// Safe Browsing URL reputation service
-	sbEnabled := os.Getenv("SAFEBROWSING_ENABLED") != "false" // default: true
-	sbService := safety.NewSafeBrowsingService(safety.SafeBrowsingConfig{
-		RDB:    cacheClient.RDB(), // Access the underlying go-redis client for SETEX caching
-		Enabled: sbEnabled,
+	// Web Risk URL reputation service
+	wrEnabled := os.Getenv("WEBRISK_ENABLED") != "false" // default: true
+	wrService, err := safety.NewWebRiskService(ctx, safety.WebRiskConfig{
+		RDB:     cacheClient.RDB(), // Access the underlying go-redis client for SETEX caching
+		Enabled: wrEnabled,
 	})
-	if sbEnabled {
-		slog.InfoContext(ctx, "Safe Browsing service created", "cache_ttl", "15m")
-	} else {
-		slog.WarnContext(ctx, "SAFEBROWSING_ENABLED=false — URL safety checks disabled")
+	if err != nil {
+		return nil, fmt.Errorf("webrisk init: %w", err)
 	}
-	_ = sbService // wired for future URL-sourced content pipeline integration
+	if wrEnabled {
+		slog.InfoContext(ctx, "Web Risk service created", "cache_ttl", "15m")
+	} else {
+		slog.WarnContext(ctx, "WEBRISK_ENABLED=false — URL safety checks disabled")
+	}
+	_ = wrService // wired for future URL-sourced content pipeline integration
 
 	// WaveSpeed analyzer (optional)
 	var waveSpeed analyzer.Analyzer

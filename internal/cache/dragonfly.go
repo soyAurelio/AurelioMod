@@ -64,7 +64,7 @@ func NewCacheClient(cfg CacheClientConfig) *CacheClient {
 }
 
 // RDB returns the underlying go-redis client for direct operations
-// like SETEX caching by the Safe Browsing service.
+// like SETEX caching by the Web Risk service.
 func (c *CacheClient) RDB() *redis.Client {
 	return c.rdb
 }

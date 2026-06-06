@@ -158,7 +158,10 @@ services:
       OTEL_SERVICE_NAME: "engine"
       PORT: "8080"
       MEDIA_SANDBOX_ENABLED: "true"
-      SAFEBROWSING_ENABLED: "true"
+      WEBRISK_ENABLED: "true"
+      WEBRISK_API_KEY: "${WEBRISK_API_KEY:-}"
+      NEON_AUDIT_ENABLED: "true"
+      NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
     depends_on:
       dragonfly:
         condition: service_healthy

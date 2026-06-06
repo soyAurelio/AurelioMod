@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,21 +85,21 @@ func TestWaveSpeedClient_VideoMimeType(t *testing.T) {
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "video-content-moderator"):
 			endpointHit = "video"
 			writeJSON(w, http.StatusOK, wavespeedSubmitResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data:    wavespeedData{ID: "task-video", Status: "processing"},
 			})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/result"):
 			writeJSON(w, http.StatusOK, wavespeedResultResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data: wavespeedData{
 					ID:     "task-video",
 					Status: "completed",
-					Outputs: map[string]bool{
+					Outputs: outputsJSON(map[string]bool{
 						"harassment": false, "hate": false, "sexual": false,
 						"sexual/minors": false, "violence": true,
-					},
+					}),
 					Timings: &wavespeedTimings{Inference: 250},
 				},
 			})
@@ -149,7 +150,7 @@ func TestWaveSpeedClient_PollingTimeout(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			writeJSON(w, http.StatusOK, wavespeedSubmitResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data:    wavespeedData{ID: "task-stuck", Status: "processing"},
 			})
@@ -157,7 +158,7 @@ func TestWaveSpeedClient_PollingTimeout(t *testing.T) {
 		}
 		// Poll returns processing forever
 		writeJSON(w, http.StatusOK, wavespeedResultResponse{
-			Code:    0,
+			Code:    200,
 			Message: "success",
 			Data:    wavespeedData{ID: "task-stuck", Status: "processing"},
 		})
@@ -185,7 +186,7 @@ func TestWaveSpeedClient_TaskFailed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			writeJSON(w, http.StatusOK, wavespeedSubmitResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data:    wavespeedData{ID: "task-fail", Status: "processing"},
 			})
@@ -193,7 +194,7 @@ func TestWaveSpeedClient_TaskFailed(t *testing.T) {
 		}
 		// Poll returns failed
 		writeJSON(w, http.StatusOK, wavespeedResultResponse{
-			Code:    0,
+			Code:    200,
 			Message: "success",
 			Data: wavespeedData{
 				ID:     "task-fail",
@@ -265,22 +266,22 @@ func TestWaveSpeedClient_AuthHeader(t *testing.T) {
 		authHeader = r.Header.Get("Authorization")
 		if r.Method == http.MethodPost {
 			writeJSON(w, http.StatusOK, wavespeedSubmitResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data:    wavespeedData{ID: "task-auth", Status: "processing"},
 			})
 			return
 		}
 		writeJSON(w, http.StatusOK, wavespeedResultResponse{
-			Code:    0,
+			Code:    200,
 			Message: "success",
 			Data: wavespeedData{
 				ID:     "task-auth",
 				Status: "completed",
-				Outputs: map[string]bool{
+				Outputs: outputsJSON(map[string]bool{
 					"harassment": false, "hate": false, "sexual": false,
 					"sexual/minors": false, "violence": false,
-				},
+				}),
 				Timings: &wavespeedTimings{Inference: 50},
 			},
 		})
@@ -307,18 +308,18 @@ func waveSpeedMockServer(t *testing.T, status string, outputs map[string]bool, i
 		switch {
 		case r.Method == http.MethodPost:
 			writeJSON(w, http.StatusOK, wavespeedSubmitResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data:    wavespeedData{ID: "task-123", Status: "processing"},
 			})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/result"):
 			writeJSON(w, http.StatusOK, wavespeedResultResponse{
-				Code:    0,
+				Code:    200,
 				Message: "success",
 				Data: wavespeedData{
 					ID:      "task-123",
 					Status:  status,
-					Outputs: outputs,
+					Outputs: outputsJSON(outputs),
 					Timings: &wavespeedTimings{Inference: inferenceMs},
 				},
 			})
@@ -333,4 +334,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// outputsJSON marshals a category map into json.RawMessage for use in
+// wavespeedData.Outputs (which is json.RawMessage, not map[string]bool).
+func outputsJSON(m map[string]bool) json.RawMessage {
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(fmt.Sprintf("outputsJSON: marshal: %v", err))
+	}
+	return json.RawMessage(b)
 }

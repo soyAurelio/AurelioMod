@@ -131,7 +131,7 @@ type wavespeedResultResponse struct {
 type wavespeedData struct {
 	ID       string             `json:"id"`
 	Model    string             `json:"model,omitempty"`
-	Outputs  map[string]bool    `json:"outputs,omitempty"`
+	Outputs  json.RawMessage    `json:"outputs,omitempty"`
 	Status   string             `json:"status"`
 	Error    string             `json:"error,omitempty"`
 	Timings  *wavespeedTimings  `json:"timings,omitempty"`
@@ -165,7 +165,7 @@ func (c *WaveSpeedClient) submitTask(ctx context.Context, endpoint, imageURL str
 		return "", fmt.Errorf("decode submit response: %w", err)
 	}
 
-	if submit.Code != 0 {
+	if submit.Code != 200 {
 		return "", fmt.Errorf("wavespeed API error: code=%d, message=%s", submit.Code, submit.Message)
 	}
 	if submit.Data.ID == "" {
@@ -228,7 +228,7 @@ func (c *WaveSpeedClient) pollOnce(ctx context.Context, taskID string) (*Moderat
 		return nil, false, fmt.Errorf("decode poll response: %w", err)
 	}
 
-	if poll.Code != 0 {
+	if poll.Code != 200 {
 		return nil, false, fmt.Errorf("wavespeed poll error: code=%d, message=%s", poll.Code, poll.Message)
 	}
 
@@ -255,7 +255,18 @@ func (c *WaveSpeedClient) pollOnce(ctx context.Context, taskID string) (*Moderat
 // ModerationResult struct. Any non-false category → Decision=true (BLOCKED).
 // Confidence is derived from the inference timing metric.
 func parseModerationResult(data *wavespeedData) *ModerationResult {
-	if data == nil || data.Outputs == nil {
+	if data == nil || len(data.Outputs) == 0 {
+		return &ModerationResult{
+			Decision:   false,
+			Confidence: 0,
+			Categories: map[string]bool{},
+		}
+	}
+
+	// Outputs is json.RawMessage — unmarshal into map.
+	// On submit responses it's "[]" (empty array), on poll responses it's "{\"category\": true}".
+	var categories map[string]bool
+	if err := json.Unmarshal(data.Outputs, &categories); err != nil {
 		return &ModerationResult{
 			Decision:   false,
 			Confidence: 0,
@@ -265,7 +276,7 @@ func parseModerationResult(data *wavespeedData) *ModerationResult {
 
 	// Derive decision: any true category → block
 	decision := false
-	for _, flagged := range data.Outputs {
+	for _, flagged := range categories {
 		if flagged {
 			decision = true
 			break
@@ -288,7 +299,7 @@ func parseModerationResult(data *wavespeedData) *ModerationResult {
 	return &ModerationResult{
 		Decision:     decision,
 		Confidence:   math.Round(confidence*10000) / 10000, // round to 4 decimal places
-		Categories:   data.Outputs,
+		Categories:   categories,
 		ProcessingMs: processingMs,
 	}
 }
