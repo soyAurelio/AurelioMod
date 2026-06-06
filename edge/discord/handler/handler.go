@@ -37,16 +37,23 @@ type Handler struct {
 	emitter audit.Emitter
 	logger  *slog.Logger
 	enforce bool
+	lang    string // "es" or "en", from BOT_LANG env
 }
 
 // New creates a Handler with the ENFORCE_MODERATION gate from environment.
 // Set ENFORCE_MODERATION=false to disable enforcement (ALLOW always).
+// Language is controlled by BOT_LANG env var (default "en").
 func New(rest DiscordRest, emitter audit.Emitter, logger *slog.Logger) *Handler {
+	lang := os.Getenv("BOT_LANG")
+	if lang != "es" {
+		lang = "en"
+	}
 	return &Handler{
 		rest:    rest,
 		emitter: emitter,
 		logger:  logger,
 		enforce: os.Getenv("ENFORCE_MODERATION") != "false",
+		lang:    lang,
 	}
 }
 
@@ -134,14 +141,24 @@ func (h *Handler) sendDM(ctx context.Context, authorID snowflake.ID, reason stri
 		return
 	}
 
-	msg := discord.MessageCreate{
-		Content: fmt.Sprintf(
+	var dmText string
+	if h.lang == "es" {
+		dmText = fmt.Sprintf(
+			"Tu mensaje fue eliminado de acuerdo con nuestra política de contenido.\n"+
+				"**Motivo**: %s\n"+
+				"Para apelar esta decisión, contactá a los moderadores del servidor.",
+			reason,
+		)
+	} else {
+		dmText = fmt.Sprintf(
 			"Your message was removed in accordance with our content policy.\n"+
 				"**Reason**: %s\n"+
 				"To appeal this decision, please contact the server moderators.",
 			reason,
-		),
+		)
 	}
+
+	msg := discord.MessageCreate{Content: dmText}
 
 	if _, err := h.rest.CreateMessage(dmChannel.ID(), msg); err != nil {
 		h.logger.WarnContext(ctx, "dm_send_failed",

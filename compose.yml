@@ -209,6 +209,7 @@ services:
       ENGINE_URL: "http://engine:8080"
       REQUIRED_GUILD_ID: "${REQUIRED_GUILD_ID:-}"
       ENFORCE_MODERATION: "${ENFORCE_MODERATION:-true}"
+      BOT_LANG: "${BOT_LANG:-es}"
     depends_on:
       engine:
         condition: service_healthy
