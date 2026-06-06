@@ -162,12 +162,20 @@ services:
       WEBRISK_API_KEY: "${WEBRISK_API_KEY:-}"
       NEON_AUDIT_ENABLED: "true"
       NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
+      R2_AUDIT_ENABLED: "true"
+      R2_ENDPOINT: "http://minio:9000"
+      R2_ACCESS_KEY_ID: "minioadmin"
+      R2_SECRET_ACCESS_KEY: "minioadmin"
+      R2_BUCKET: "aureliomod-audit"
+      R2_REGION: "us-east-1"
     depends_on:
       dragonfly:
         condition: service_healthy
       nats:
         condition: service_healthy
       weaviate:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
   # === yt-dlp Sidecar (sandboxed URL content fetching) ===

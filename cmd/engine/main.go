@@ -234,8 +234,8 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	// --- Integration hooks ---
 
-	// Audit emitter chain: slog (critical) + Neon DB (best-effort, gated).
-	// R2 cold storage is nil until provisioned.
+	// Audit emitter chain: slog (critical) + Neon DB (best-effort, gated)
+	// + R2 cold storage (best-effort, gated).
 	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -258,7 +258,23 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		}
 	}
 
-	auditEmitter := audit.NewMultiEmitter(auditLogger, neonStore, nil)
+	// R2 cold storage audit emitter — gated by R2_AUDIT_ENABLED env var.
+	// Uses MinIO in dev, Cloudflare R2 in production (both S3-compatible).
+	var r2Store audit.R2Store
+	if os.Getenv("R2_AUDIT_ENABLED") == "true" {
+		s3store, err := audit.NewS3AuditStoreFromEnv(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "r2 audit store init failed", "error", err)
+		} else if s3store != nil {
+			r2Store = s3store
+			slog.InfoContext(ctx, "r2 audit store enabled",
+				slog.String("endpoint", os.Getenv("R2_ENDPOINT")),
+				slog.String("bucket", os.Getenv("R2_BUCKET")),
+			)
+		}
+	}
+
+	auditEmitter := audit.NewMultiEmitter(auditLogger, neonStore, r2Store)
 
 	// NATS decision publisher (optional)
 	var decisionHook pipeline.DecisionHook
