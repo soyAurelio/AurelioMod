@@ -14,6 +14,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -514,7 +515,11 @@ func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, 
 		}, nil
 	}
 
-	result, err := p.analyzer.Analyze(ctx, fmt.Sprintf("https://storage.aureliomod.dev/%s", l1Hash), "image/jpeg")
+	// Send normalized JPEG as Base64 data URI — WaveSpeed downloads from URL,
+	// but we don't have a public URL until R2/MinIO upload. Base64 data URI
+	// avoids the fake "storage.aureliomod.dev" URL that doesn't resolve.
+	imageURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(normalized.JPEGBytes)
+	result, err := p.analyzer.Analyze(ctx, imageURI, "image/jpeg")
 	if err != nil {
 		if degradeResp, degradedOk := p.lastChanceRecheck(ctx, l1Hash, ph, time.Since(start)); degradedOk {
 			return degradeResp, nil
