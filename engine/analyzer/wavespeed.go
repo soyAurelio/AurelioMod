@@ -254,6 +254,10 @@ func (c *WaveSpeedClient) pollOnce(ctx context.Context, taskID string) (*Moderat
 // parseModerationResult converts the WaveSpeed API response into a
 // ModerationResult struct. Any non-false category → Decision=true (BLOCKED).
 // Confidence is derived from the inference timing metric.
+//
+// WaveSpeed returns outputs as either:
+//   - Array:  [{"sexual": true, "violence": false}]  (Molmo2 model)
+//   - Object: {"sexual": true, "violence": false}     (older models)
 func parseModerationResult(data *wavespeedData) *ModerationResult {
 	if data == nil || len(data.Outputs) == 0 {
 		return &ModerationResult{
@@ -263,14 +267,28 @@ func parseModerationResult(data *wavespeedData) *ModerationResult {
 		}
 	}
 
-	// Outputs is json.RawMessage — unmarshal into map.
-	// On submit responses it's "[]" (empty array), on poll responses it's "{\"category\": true}".
 	var categories map[string]bool
-	if err := json.Unmarshal(data.Outputs, &categories); err != nil {
-		return &ModerationResult{
-			Decision:   false,
-			Confidence: 0,
-			Categories: map[string]bool{},
+	raw := bytes.TrimSpace(data.Outputs)
+
+	if len(raw) > 0 && raw[0] == '[' {
+		// Array format: take the first element
+		var arr []map[string]bool
+		if err := json.Unmarshal(data.Outputs, &arr); err != nil || len(arr) == 0 {
+			return &ModerationResult{
+				Decision:   false,
+				Confidence: 0,
+				Categories: map[string]bool{},
+			}
+		}
+		categories = arr[0]
+	} else {
+		// Object format
+		if err := json.Unmarshal(data.Outputs, &categories); err != nil {
+			return &ModerationResult{
+				Decision:   false,
+				Confidence: 0,
+				Categories: map[string]bool{},
+			}
 		}
 	}
 
@@ -298,7 +316,7 @@ func parseModerationResult(data *wavespeedData) *ModerationResult {
 
 	return &ModerationResult{
 		Decision:     decision,
-		Confidence:   math.Round(confidence*10000) / 10000, // round to 4 decimal places
+		Confidence:   math.Round(confidence*10000) / 10000,
 		Categories:   categories,
 		ProcessingMs: processingMs,
 	}
