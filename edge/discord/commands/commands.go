@@ -25,6 +25,7 @@ import (
 	aureliomodv1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
 
 	"github.com/soyAurelio/AurelioMod/edge/discord/client"
+	"github.com/soyAurelio/AurelioMod/edge/discord/listener"
 	"github.com/soyAurelio/AurelioMod/edge/discord/ratelimit"
 )
 
@@ -106,15 +107,39 @@ func Register(r handler.Router, analysisClient client.AnalysisClient, limiter ra
 }
 
 // moderateHandler returns a SlashCommandHandler for /moderate <url>.
+// Downloads CDN attachments as binary images for proper WaveSpeed analysis.
+// All responses are ephemeral (only visible to the invoking user).
 func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, logger *slog.Logger) handler.SlashCommandHandler {
 	return func(data discord.SlashCommandInteractionData, e *handler.CommandEvent) error {
 		url := data.String("url")
 
+		// Determine content type and raw bytes.
+		contentType := aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL
+		rawBytes := []byte(url)
+
+		// If it's a Discord CDN image, download the binary for proper analysis.
+		if strings.Contains(url, "cdn.discordapp.com") || strings.Contains(url, "media.discordapp.net") {
+			downloaded, ctStr, err := listener.DownloadAttachment(e.Ctx, url, listener.MaxAttachmentBytes)
+			if err != nil {
+				logger.WarnContext(e.Ctx, "moderate_cdn_download_failed",
+					slog.String("event", "moderate_cdn_download_failed"),
+					slog.String("error", err.Error()),
+					slog.String("url", url),
+				)
+			} else {
+				rawBytes = downloaded
+				mapped := listener.MapContentType(ctStr)
+				if mapped != aureliomodv1.ContentType_CONTENT_TYPE_UNSPECIFIED {
+					contentType = mapped
+				}
+			}
+		}
+
 		req := &aureliomodv1.AnalyzeRequest{
 			WorkspaceId:    workspaceID,
 			ContentId:      fmt.Sprintf("discord:%s:%s", e.GuildID().String(), e.ID().String()),
-			RawBytes:       []byte(url),
-			ContentType:    aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL,
+			RawBytes:       rawBytes,
+			ContentType:    contentType,
 			SourcePlatform: aureliomodv1.SourcePlatform_SOURCE_PLATFORM_DISCORD,
 		}
 
@@ -129,7 +154,10 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 				URL:      url,
 				Decision: "ERROR",
 			})
-			return e.CreateMessage(discord.MessageCreate{Content: reply})
+			return e.CreateMessage(discord.MessageCreate{
+				Content: reply,
+				Flags:   discord.MessageFlagEphemeral,
+			})
 		}
 
 		reply := FormatModerateReply(ModerateResponse{
@@ -139,7 +167,10 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 			Confidence:  resp.Confidence,
 		})
 
-		return e.CreateMessage(discord.MessageCreate{Content: reply})
+		return e.CreateMessage(discord.MessageCreate{
+			Content: reply,
+			Flags:   discord.MessageFlagEphemeral,
+		})
 	}
 }
 
