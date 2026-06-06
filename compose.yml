@@ -186,7 +186,6 @@ services:
     command: >
       --no-progress
       --print-json
-      --max-redirects 5
       --no-check-certificates
     healthcheck:
       test: ["CMD", "yt-dlp", "--version"]
