@@ -350,8 +350,12 @@ type AnalyzeResponse struct {
 	ProcessingMs int64 `protobuf:"varint,7,opt,name=processing_ms,json=processingMs,proto3" json:"processing_ms,omitempty"`
 	// analyst_version is the WaveSpeed model version used (for audit).
 	AnalystVersion string `protobuf:"bytes,8,opt,name=analyst_version,json=analystVersion,proto3" json:"analyst_version,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// degraded_confidence is set when the decision was made via degraded
+	// fallback (WaveSpeed unavailable → cache re-check). 0.0 to 1.0.
+	// Zero means "no degradation" (normal path).
+	DegradedConfidence float64 `protobuf:"fixed64,9,opt,name=degraded_confidence,json=degradedConfidence,proto3" json:"degraded_confidence,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AnalyzeResponse) Reset() {
@@ -440,6 +444,13 @@ func (x *AnalyzeResponse) GetAnalystVersion() string {
 	return ""
 }
 
+func (x *AnalyzeResponse) GetDegradedConfidence() float64 {
+	if x != nil {
+		return x.DegradedConfidence
+	}
+	return 0
+}
+
 var File_aureliomod_v1_content_proto protoreflect.FileDescriptor
 
 const file_aureliomod_v1_content_proto_rawDesc = "" +
@@ -451,7 +462,7 @@ const file_aureliomod_v1_content_proto_rawDesc = "" +
 	"content_id\x18\x02 \x01(\tR\tcontentId\x12\x1b\n" +
 	"\traw_bytes\x18\x03 \x01(\fR\brawBytes\x12=\n" +
 	"\fcontent_type\x18\x04 \x01(\x0e2\x1a.aureliomod.v1.ContentTypeR\vcontentType\x12F\n" +
-	"\x0fsource_platform\x18\x05 \x01(\x0e2\x1d.aureliomod.v1.SourcePlatformR\x0esourcePlatform\"\xd2\x02\n" +
+	"\x0fsource_platform\x18\x05 \x01(\x0e2\x1d.aureliomod.v1.SourcePlatformR\x0esourcePlatform\"\x83\x03\n" +
 	"\x0fAnalyzeResponse\x123\n" +
 	"\bdecision\x18\x01 \x01(\x0e2\x17.aureliomod.v1.DecisionR\bdecision\x12!\n" +
 	"\fblock_reason\x18\x02 \x01(\tR\vblockReason\x12\x1e\n" +
@@ -463,7 +474,8 @@ const file_aureliomod_v1_content_proto_rawDesc = "" +
 	"\vcache_level\x18\x06 \x01(\x0e2\x19.aureliomod.v1.CacheLevelR\n" +
 	"cacheLevel\x12#\n" +
 	"\rprocessing_ms\x18\a \x01(\x03R\fprocessingMs\x12'\n" +
-	"\x0fanalyst_version\x18\b \x01(\tR\x0eanalystVersion*u\n" +
+	"\x0fanalyst_version\x18\b \x01(\tR\x0eanalystVersion\x12/\n" +
+	"\x13degraded_confidence\x18\t \x01(\x01R\x12degradedConfidence*u\n" +
 	"\bDecision\x12\x18\n" +
 	"\x14DECISION_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eDECISION_ALLOW\x10\x01\x12\x12\n" +

@@ -56,6 +56,11 @@ message AnalyzeResponse {
 
   // analyst_version is the WaveSpeed model version used (for audit).
   string analyst_version = 8;
+
+  // degraded_confidence is set when the decision was made via degraded
+  // fallback (WaveSpeed unavailable → cache re-check). 0.0 to 1.0.
+  // Zero means "no degradation" (normal path).
+  double degraded_confidence = 9;
 }
 
 enum Decision {
