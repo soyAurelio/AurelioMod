@@ -24,6 +24,9 @@ vendor/
 __debug_bin*
 __debug*
 
+# Binario compilado local (sdd-apply testing)
+edge-discord
+
 # Docker volumes locales
 volumes/
 

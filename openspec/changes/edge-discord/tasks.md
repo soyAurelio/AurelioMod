@@ -34,10 +34,10 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Core behavior + wiring — PR 2
 
-- [ ] 2.1 Create `edge/discord/commands/commands.go`: register `/moderate <url>`, `/status`, `/config workspace_id <id> enforce <on|off>`; `/moderate` calls Analyze + replies with decision; `/status` ephemeral with uptime, engine health, breaker state, tokens
-- [ ] 2.2 Create `edge/discord/handler/handler.go`: `EnforceDecision(ctx, msg, decision)` — BLOCK→delete ≤500ms + DM author with reason, ALLOW→noop, QUEUED→default BLOCK `block_reason=pending_analysis`; gate via `ENFORCE_MODERATION` env (default true)
-- [ ] 2.3 Create `cmd/edge-discord/main.go`: load env (DISCORD_TOKEN, ENGINE_URL, REQUIRED_GUILD_ID), slog JSON, signal.NotifyContext, wire all packages, disgo start, drain in-flight RPCs on SIGTERM, exit 0 ≤10s
-- [ ] 2.4 Modify `compose.yml`: add `edge-discord` service with build context, DISCORD_TOKEN/ENGINE_URL env vars, depends_on engine
+- [x] 2.1 Create `edge/discord/commands/commands.go`: register `/moderate <url>`, `/status`, `/config workspace_id <id> enforce <on|off>`; `/moderate` calls Analyze + replies with decision; `/status` ephemeral with uptime, engine health, breaker state, tokens
+- [x] 2.2 Create `edge/discord/handler/handler.go`: `EnforceDecision(ctx, msg, decision)` — BLOCK→delete ≤500ms + DM author with reason, ALLOW→noop, QUEUED→default BLOCK `block_reason=pending_analysis`; gate via `ENFORCE_MODERATION` env (default true)
+- [x] 2.3 Create `cmd/edge-discord/main.go`: load env (DISCORD_TOKEN, ENGINE_URL, REQUIRED_GUILD_ID), slog JSON, signal.NotifyContext, wire all packages, disgo start, drain in-flight RPCs on SIGTERM, exit 0 ≤10s
+- [x] 2.4 Modify `compose.yml`: add `edge-discord` service with build context, DISCORD_TOKEN/ENGINE_URL env vars, depends_on engine
 
 ## Phase 3: Testing — both PRs
 
@@ -45,6 +45,6 @@ Chain strategy: feature-branch-chain
 - [x] 3.2 Test `audit`: SlogEmitter emits valid JSON with all required fields on BLOCK event
 - [x] 3.3 Test `client`: circuit breaker open/close transitions via `synctest` + mock failing RPC (spec §discord-bot scenarios 1-2)
 - [x] 3.4 Test `listener`: plain text skipped, >10MB skipped with warning, image ≤10MB triggers Analyze (spec §discord-bot scenarios 1-3)
-- [ ] 3.5 Test `handler`: mock disgo REST; verify delete+DM for BLOCK, noop for ALLOW, fallback for QUEUED, gate off skips (spec §discord-moderation scenarios 1-3)
-- [ ] 3.6 Test `commands`: mock interaction responses for /moderate, /status, /config; verify ephemeral /status fields (spec §discord-commands scenarios 1-2)
-- [ ] 3.7 Test `main`: integration smoke — bot starts, connects, accepts SIGTERM, drains RPCs before disgo.Close (spec §discord-bot scenario 2)
+- [x] 3.5 Test `handler`: mock disgo REST; verify delete+DM for BLOCK, noop for ALLOW, fallback for QUEUED, gate off skips (spec §discord-moderation scenarios 1-3)
+- [x] 3.6 Test `commands`: mock interaction responses for /moderate, /status, /config; verify ephemeral /status fields (spec §discord-commands scenarios 1-2)
+- [x] 3.7 Test `main`: integration smoke — bot starts, connects, accepts SIGTERM, drains RPCs before disgo.Close (spec §discord-bot scenario 2)

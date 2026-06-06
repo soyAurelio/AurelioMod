@@ -194,6 +194,22 @@ services:
       retries: 3
       start_period: 10s
 
+  # === Edge Service: Discord Bot (ConnectRPC client) ===
+  edge-discord:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.edge-discord
+    container_name: aureliomod-edge-discord
+    environment:
+      DISCORD_TOKEN: "${DISCORD_TOKEN:-}"
+      ENGINE_URL: "http://engine:8080"
+      REQUIRED_GUILD_ID: "${REQUIRED_GUILD_ID:-}"
+      ENFORCE_MODERATION: "${ENFORCE_MODERATION:-true}"
+    depends_on:
+      engine:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   dragonfly_data:
   nats_data:
