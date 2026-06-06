@@ -187,23 +187,47 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 	var rawBytes []byte
 	contentType := aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL
 
-	// Check for attachment binary download first
+	// Check for attachment binary download first (regular + embed images)
+	var urlsToTry []string
 	for _, att := range event.Message.Attachments {
-		if att.Size <= 10*1024*1024 && listener.IsDiscordCDN(att.URL) {
-			downloaded, ct, err := listener.DownloadAttachment(ctx, att.URL, listener.MaxAttachmentBytes)
+		urlsToTry = append(urlsToTry, att.URL)
+	}
+	for _, embed := range event.Message.Embeds {
+		if embed.Image != nil {
+			urlsToTry = append(urlsToTry, embed.Image.URL)
+		}
+	}
+	for _, url := range urlsToTry {
+		logger.DebugContext(ctx, "checking attachment",
+			slog.String("event", "checking_attachment"),
+			slog.String("url", url),
+			slog.Bool("is_cdn", listener.IsDiscordCDN(url)),
+		)
+
+		if listener.IsDiscordCDN(url) {
+			downloaded, ct, err := listener.DownloadAttachment(ctx, url, listener.MaxAttachmentBytes)
 			if err != nil {
 				logger.WarnContext(ctx, "attachment download failed, falling back to text",
 					slog.String("event", "attachment_download_failed"),
 					slog.String("error", err.Error()),
-					slog.String("url", att.URL),
+					slog.String("url", url),
 				)
 				continue
 			}
 			rawBytes = downloaded
-			if att.ContentType != nil {
-				contentType = attContentType(*att.ContentType)
+			logger.InfoContext(ctx, "attachment downloaded",
+				slog.String("event", "attachment_downloaded"),
+				slog.Int("bytes", len(downloaded)),
+				slog.String("url", url),
+			)
+			// Determine content type from the first attachment's MIME
+			for _, att := range event.Message.Attachments {
+				if att.URL == url && att.ContentType != nil {
+					contentType = attContentType(*att.ContentType)
+					break
+				}
 			}
-			_ = ct // Content-Type from response, use Discord's for consistency
+			_ = ct
 			break // only download first valid attachment
 		}
 	}

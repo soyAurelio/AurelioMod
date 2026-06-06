@@ -80,6 +80,17 @@ func (l *Listener) OnMessageCreate(event *events.MessageCreate) bool {
 			Size:     att.Size,
 		})
 	}
+	// Forwarded messages with images come as embeds, not attachments.
+	for _, embed := range event.Message.Embeds {
+		if embed.Image != nil {
+			data.Attachments = append(data.Attachments, AttachmentData{
+				Filename: "embed_image",
+				URL:      embed.Image.URL,
+				Size:     embed.Image.Width * embed.Image.Height,
+			})
+		}
+	}
+
 	return l.shouldAnalyze(data)
 }
 
