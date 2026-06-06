@@ -1,0 +1,59 @@
+# AurelioMod Edge Discord Service — Production Dockerfile
+# Multi-stage build with Distroless runtime for minimal attack surface.
+# CGO_ENABLED=0 static binary. June 2026.
+#
+# Stages:
+#   1. builder  — golang:1.26-alpine  → compile Go binary (CGO_ENABLED=0)
+#   2. health   — busybox:1.37         → extract wget for HEALTHCHECK
+#   3. runtime  — distroless/static    → final minimal image
+
+# === Stage 1: Build Go binary ===
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache ca-certificates git
+
+WORKDIR /src
+
+# Cache dependency layer
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build only the edge-discord binary
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" \
+    -o /bin/edge-discord ./cmd/edge-discord
+
+# === Stage 2: Extract wget for HEALTHCHECK ===
+FROM busybox:1.37 AS health
+
+# === Stage 3: Runtime — Distroless static ===
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+
+# Copy Go binary
+COPY --from=builder /bin/edge-discord /usr/bin/edge-discord
+
+# Copy CA certificates for outbound HTTPS (Engine RPCs)
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy wget for Docker HEALTHCHECK
+COPY --from=health /bin/wget /usr/bin/wget
+
+# Expose port for health check endpoint (PR 2 adds the server)
+EXPOSE 8080
+
+# OCI-compliant labels
+LABEL org.opencontainers.image.title="AurelioMod Edge Discord"
+LABEL org.opencontainers.image.description="Discord bot adapter for AurelioMod content moderation. Intercepts messages via disgo, forwards to Engine via ConnectRPC with circuit breaker."
+LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.source="https://github.com/soyAurelio/AurelioMod"
+LABEL org.opencontainers.image.licenses="UNLICENSED"
+LABEL org.opencontainers.image.vendor="AurelioMod"
+LABEL org.opencontainers.image.created="2026-06-06"
+
+# Health check: verify the edge service is responding
+# (enabled in PR 2 when the HTTP server is added)
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 --start-period=10s \
+    CMD ["/usr/bin/wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+
+ENTRYPOINT ["/usr/bin/edge-discord"]
