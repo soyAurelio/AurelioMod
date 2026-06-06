@@ -108,16 +108,22 @@ func Register(r handler.Router, analysisClient client.AnalysisClient, limiter ra
 
 // moderateHandler returns a SlashCommandHandler for /moderate <url>.
 // Downloads CDN attachments as binary images for proper WaveSpeed analysis.
+// Uses deferred response to avoid Discord's 3-second interaction timeout.
 // All responses are ephemeral (only visible to the invoking user).
 func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, logger *slog.Logger) handler.SlashCommandHandler {
 	return func(data discord.SlashCommandInteractionData, e *handler.CommandEvent) error {
 		url := data.String("url")
 
+		// Defer immediately to beat Discord's 3-second timeout.
+		if err := e.DeferCreateMessage(true); err != nil {
+			return err
+		}
+
 		// Determine content type and raw bytes.
 		contentType := aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL
 		rawBytes := []byte(url)
 
-		// If it's a Discord CDN image, download the binary for proper analysis.
+		// If it's a CDN image, download the binary for proper analysis.
 		if strings.Contains(url, "cdn.discordapp.com") || strings.Contains(url, "media.discordapp.net") {
 			downloaded, ctStr, err := listener.DownloadAttachment(e.Ctx, url, listener.MaxAttachmentBytes)
 			if err != nil {
@@ -154,10 +160,8 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 				URL:      url,
 				Decision: "ERROR",
 			})
-			return e.CreateMessage(discord.MessageCreate{
-				Content: reply,
-				Flags:   discord.MessageFlagEphemeral,
-			})
+			_, uErr := e.UpdateInteractionResponse(discord.MessageUpdate{Content: &reply})
+			return uErr
 		}
 
 		reply := FormatModerateReply(ModerateResponse{
@@ -167,10 +171,8 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 			Confidence:  resp.Confidence,
 		})
 
-		return e.CreateMessage(discord.MessageCreate{
-			Content: reply,
-			Flags:   discord.MessageFlagEphemeral,
-		})
+		_, err = e.UpdateInteractionResponse(discord.MessageUpdate{Content: &reply})
+		return err
 	}
 }
 
