@@ -162,6 +162,19 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 	}
 
 	// Standard path: normalize → L1 → L2 → L3 → WaveSpeed
+	//
+	// EXTERNAL_URL without YouTube frame extraction → QUEUED.
+	// URLs need yt-dlp fetch + Web Risk before pixel-level analysis.
+	// This avoids FFmpeg decode errors on URL text.
+	if req.ContentType == v1.ContentType_CONTENT_TYPE_EXTERNAL_URL {
+		return &v1.AnalyzeResponse{
+			Decision:     v1.Decision_DECISION_QUEUED,
+			BlockReason:  "pending_url_fetch",
+			CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
+			ProcessingMs: time.Since(start).Milliseconds(),
+		}, nil
+	}
+
 	return p.executeStandard(ctx, req, start)
 }
 

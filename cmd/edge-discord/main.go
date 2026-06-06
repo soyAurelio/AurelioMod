@@ -174,30 +174,50 @@ func main() {
 
 // handleMessage processes a filtered MessageCreate event:
 // 1. Rate-limit check
-// 2. Build AnalyzeRequest from message content
-// 3. Call Engine Analyze
-// 4. Enforce decision
+// 2. Download CDN attachment binary (if present) or use message text
+// 3. Build AnalyzeRequest with correct ContentType
+// 4. Call Engine Analyze
+// 5. Enforce decision
 func handleMessage(ctx context.Context, event *events.MessageCreate, analysisClient client.AnalysisClient, limiter ratelimit.Limiter, decisionHandler *discordhandler.Handler, workspaceID string, logger *slog.Logger) {
 	// Rate limit check.
 	if err := limiter.Wait(ctx); err != nil {
-		return // dropped — already logged by ratelimit package
+		return // dropped
 	}
 
-	// Build the AnalyzeRequest.
-	content := event.Message.Content
+	var rawBytes []byte
 	contentType := aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL
 
-		// Determine content type from attachments.
+	// Check for attachment binary download first
 	for _, att := range event.Message.Attachments {
-		if att.Size <= 10*1024*1024 && att.ContentType != nil {
-			contentType = attContentType(*att.ContentType)
+		if att.Size <= 10*1024*1024 && listener.IsDiscordCDN(att.URL) {
+			downloaded, ct, err := listener.DownloadAttachment(ctx, att.URL, listener.MaxAttachmentBytes)
+			if err != nil {
+				logger.WarnContext(ctx, "attachment download failed, falling back to text",
+					slog.String("event", "attachment_download_failed"),
+					slog.String("error", err.Error()),
+					slog.String("url", att.URL),
+				)
+				continue
+			}
+			rawBytes = downloaded
+			if att.ContentType != nil {
+				contentType = attContentType(*att.ContentType)
+			}
+			_ = ct // Content-Type from response, use Discord's for consistency
+			break // only download first valid attachment
 		}
+	}
+
+	// Fallback: use message text content
+	if len(rawBytes) == 0 {
+		rawBytes = []byte(event.Message.Content)
+		// URLs are EXTERNAL_URL, already set
 	}
 
 	req := &aureliomodv1.AnalyzeRequest{
 		WorkspaceId:    workspaceID,
 		ContentId:      event.Message.ID.String(),
-		RawBytes:       []byte(content),
+		RawBytes:       rawBytes,
 		ContentType:    contentType,
 		SourcePlatform: aureliomodv1.SourcePlatform_SOURCE_PLATFORM_DISCORD,
 	}
