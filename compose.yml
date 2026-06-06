@@ -168,6 +168,7 @@ services:
       R2_SECRET_ACCESS_KEY: "minioadmin"
       R2_BUCKET: "aureliomod-audit"
       R2_REGION: "us-east-1"
+      YTDLP_SIDECAR_URL: "http://ytdlp-sidecar:8080"
     depends_on:
       dragonfly:
         condition: service_healthy
@@ -178,19 +179,22 @@ services:
       minio:
         condition: service_healthy
 
-  # === yt-dlp Sidecar (sandboxed URL content fetching) ===
-  yt-dlp:
-    image: jauderho/yt-dlp:2024.12.06
-    container_name: aureliomod-ytdlp
+  # === yt-dlp Sidecar (sandboxed HTTP wrapper) ===
+  ytdlp-sidecar:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.ytdlp-sidecar
+    container_name: aureliomod-ytdlp-sidecar
     restart: unless-stopped
-    command: >
-      --no-progress
-      --print-json
-      --max-redirects 5
-      --no-check-certificates
+    ports:
+      - "8081:8080"
+    environment:
+      YTDLP_SIDECAR_ENABLED: "true"
+      YTDLP_SIDECAR_PORT: "8080"
     healthcheck:
-      test: ["CMD", "yt-dlp", "--version"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
       interval: 30s
+      timeout: 5s
       retries: 3
       start_period: 10s
 

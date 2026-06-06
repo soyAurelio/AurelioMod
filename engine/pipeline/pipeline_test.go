@@ -517,8 +517,11 @@ func TestPipeline_WaveSpeed_CleanDecision(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeedError_CircuitBreakerOpen tests: WaveSpeed error → pipeline returns error.
+// TestPipeline_WaveSpeedError_CircuitBreakerOpen tests: WaveSpeed error
+// → last-chance recheck all miss → DECISION_ERROR with degraded_confidence=0.
 func TestPipeline_WaveSpeedError_CircuitBreakerOpen(t *testing.T) {
+	blake3Hash := precomputeHash()
+
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
 	l2 := &mockL2Cache{decisions: nil}                                // miss
 	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
@@ -527,12 +530,25 @@ func TestPipeline_WaveSpeedError_CircuitBreakerOpen(t *testing.T) {
 	}
 	p := newFullPipeline(l1, l2, a, wv)
 
-	_, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
 		WorkspaceId: "ws-test",
 		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
 	})
-	if err == nil {
-		t.Fatal("Expected error when WaveSpeed is unavailable, got nil")
+	if err != nil {
+		t.Fatalf("Execute should not error on degraded fallback, got: %v", err)
+	}
+
+	if resp.Decision != v1.Decision_DECISION_ERROR {
+		t.Errorf("Decision = %v, want DECISION_ERROR (all caches empty)", resp.Decision)
+	}
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
+		t.Errorf("CacheLevel = %v, want NONE", resp.CacheLevel)
+	}
+	if resp.DegradedConfidence != 0 {
+		t.Errorf("DegradedConfidence = %f, want 0", resp.DegradedConfidence)
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
 	}
 }
 
@@ -901,6 +917,234 @@ func TestPipeline_PartialBackPopulationFailure(t *testing.T) {
 	}
 }
 
+// --- smart mocks for last-chance recheck ---
+
+// missThenHitL1 returns miss on first GetL1 call, then hit on subsequent calls.
+// Simulates: cache was populated by a concurrent request between initial check
+// and the last-chance recheck.
+type missThenHitL1 struct {
+	firstCall  bool
+	decisions  map[string]*cache.CachedDecision
+}
+
+func (m *missThenHitL1) GetL1(_ context.Context, blake3Hash string) (*cache.CachedDecision, bool) {
+	if !m.firstCall {
+		m.firstCall = true
+		return nil, false // miss on first call (initial check)
+	}
+	d, ok := m.decisions[blake3Hash]
+	return d, ok // hit on second call (last-chance recheck)
+}
+
+func (m *missThenHitL1) SetL1(_ context.Context, _ string, _ *cache.CachedDecision) error { return nil }
+
+// missThenHitL2 returns empty on first GetL2 call, then hit on subsequent calls.
+type missThenHitL2 struct {
+	firstCall  bool
+	decisions  []*cache.CachedDecision
+}
+
+func (m *missThenHitL2) GetL2(_ context.Context, _ uint64, _ int) ([]*cache.CachedDecision, error) {
+	if !m.firstCall {
+		m.firstCall = true
+		return nil, nil // miss on first call
+	}
+	return m.decisions, nil // hit on second call
+}
+
+func (m *missThenHitL2) SetL2(_ context.Context, _ uint64, _ *cache.CachedDecision) error { return nil }
+
+// missThenHitWv returns nil on first SearchSimilar call, then hit on subsequent calls.
+type missThenHitWv struct {
+	firstCall       bool
+	cachedDecision  *cache.CachedDecision
+}
+
+func (m *missThenHitWv) SearchSimilar(_ context.Context, _ string, _ float32) (*cache.CachedDecision, error) {
+	if !m.firstCall {
+		m.firstCall = true
+		return nil, nil // miss on first call
+	}
+	return m.cachedDecision, nil // hit on second call
+}
+
+func (m *missThenHitWv) IndexDecision(_ context.Context, _ string, _ *cache.CachedDecision) error { return nil }
+
+// --- graceful degradation: WaveSpeed error → lastChanceRecheck ---
+
+// TestPipeline_WaveSpeedError_L1LastChanceHit verifies that when WaveSpeed
+// errors AND L1 cache was populated (by a concurrent request) during the wait,
+// the last-chance recheck returns the cached decision with degraded_confidence.
+func TestPipeline_WaveSpeedError_L1LastChanceHit(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &missThenHitL1{decisions: map[string]*cache.CachedDecision{
+		blake3Hash: cachedBlock(),
+	}}
+	l2 := &mockL2Cache{decisions: nil}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
+	}
+	p := New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should not error on degraded L1 fallback, got: %v", err)
+	}
+
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
+	}
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3 {
+		t.Errorf("CacheLevel = %v, want L1_BLAKE3 (last-chance recheck hit)", resp.CacheLevel)
+	}
+	if resp.DegradedConfidence == 0 {
+		t.Error("DegradedConfidence should be > 0 on cache fallback hit")
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_WaveSpeedError_L2LastChanceHit verifies L2 hit during last-chance
+// recheck after WaveSpeed failure.
+func TestPipeline_WaveSpeedError_L2LastChanceHit(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss both times
+	l2 := &missThenHitL2{decisions: []*cache.CachedDecision{cachedAllow()}}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		err: errors.New("HTTP 429 Too Many Requests"),
+	}
+	p := New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should not error on L2 last-chance hit, got: %v", err)
+	}
+
+	if resp.Decision != v1.Decision_DECISION_ALLOW {
+		t.Errorf("Decision = %v, want ALLOW", resp.Decision)
+	}
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_L2_PHASH {
+		t.Errorf("CacheLevel = %v, want L2_PHASH (last-chance recheck hit)", resp.CacheLevel)
+	}
+	if resp.DegradedConfidence == 0 {
+		t.Error("DegradedConfidence should be > 0 on L2 fallback hit")
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_WaveSpeedError_L3LastChanceHit verifies L3 hit during last-chance
+// recheck after WaveSpeed failure.
+func TestPipeline_WaveSpeedError_L3LastChanceHit(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss
+	l2 := &mockL2Cache{decisions: nil}                                 // L2 miss
+	wv := &missThenHitWv{cachedDecision: cachedBlock()}                // L3 miss first, hit second
+	a := &mockAnalyzer{
+		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
+	}
+	p := New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should not error on L3 last-chance hit, got: %v", err)
+	}
+
+	if resp.Decision != v1.Decision_DECISION_BLOCK {
+		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
+	}
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE {
+		t.Errorf("CacheLevel = %v, want L3_WEAVIATE (last-chance recheck hit)", resp.CacheLevel)
+	}
+	if resp.DegradedConfidence == 0 {
+		t.Error("DegradedConfidence should be > 0 on L3 fallback hit")
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_WaveSpeedError_AllCachesMiss verifies that when WaveSpeed errors
+// and ALL caches miss on last-chance recheck, the pipeline returns
+// DECISION_ERROR with DegradedConfidence=0.
+func TestPipeline_WaveSpeedError_AllCachesMiss(t *testing.T) {
+	blake3Hash := precomputeHash()
+
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss
+	l2 := &mockL2Cache{decisions: nil}                                 // L2 miss
+	wv := &mockWvClient{cachedDecision: nil}                           // L3 miss
+	a := &mockAnalyzer{
+		err: errors.New("HTTP 429 Too Many Requests"),
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute should not error even on total cache miss, got: %v", err)
+	}
+
+	if resp.Decision != v1.Decision_DECISION_ERROR {
+		t.Errorf("Decision = %v, want DECISION_ERROR (all caches missed)", resp.Decision)
+	}
+	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
+		t.Errorf("CacheLevel = %v, want NONE", resp.CacheLevel)
+	}
+	if resp.DegradedConfidence != 0 {
+		t.Errorf("DegradedConfidence = %f, want 0 (complete cache miss)", resp.DegradedConfidence)
+	}
+	if resp.ContentHash != blake3Hash {
+		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
+	}
+}
+
+// TestPipeline_WaveSpeedSuccess_NoDegradedConfidence verifies that a normal
+// successful WaveSpeed call does NOT set degraded_confidence.
+func TestPipeline_WaveSpeedSuccess_NoDegradedConfidence(t *testing.T) {
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
+	l2 := &mockL2Cache{decisions: nil}
+	wv := &mockWvClient{cachedDecision: nil}
+	a := &mockAnalyzer{
+		result: &analyzer.ModerationResult{
+			Decision:     false,
+			Confidence:   0.99,
+			Categories:   map[string]bool{},
+			ProcessingMs: 50,
+		},
+	}
+	p := newFullPipeline(l1, l2, a, wv)
+
+	resp, err := p.Execute(t.Context(), &v1.AnalyzeRequest{
+		WorkspaceId: "ws-test",
+		RawBytes:    []byte{0xFF, 0xD8, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if resp.DegradedConfidence != 0 {
+		t.Errorf("DegradedConfidence = %f, want 0 (WaveSpeed succeeded, no degradation)", resp.DegradedConfidence)
+	}
+}
+
 // --- synctest deadline scenarios ---
 
 // slowNormalizer blocks until the context is cancelled, simulating a
@@ -949,9 +1193,12 @@ func (s *slowAnalyzer) Analyze(ctx context.Context, _, _ string) (*analyzer.Mode
 }
 
 // TestPipeline_Deadline_WaveSpeedExpired verifies that when L1 and L2 miss
-// and the WaveSpeed call times out, the pipeline returns a deadline error.
+// and the WaveSpeed call times out (context deadline exceeded), the pipeline
+// gracefully degrades: last-chance recheck → DECISION_ERROR with zero confidence.
 func TestPipeline_Deadline_WaveSpeedExpired(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		blake3Hash := precomputeHash()
+
 		l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
 		l2 := &mockL2Cache{decisions: nil}                                // miss
 
@@ -960,13 +1207,23 @@ func TestPipeline_Deadline_WaveSpeedExpired(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
 
-		_, err := p.Execute(ctx, &v1.AnalyzeRequest{
+		resp, err := p.Execute(ctx, &v1.AnalyzeRequest{
 			WorkspaceId: "ws-deadline-ws",
 			RawBytes:    []byte{0xFF, 0xD8, 0xFF},
 		})
 
-		if err == nil {
-			t.Fatal("Expected deadline error from WaveSpeed, got nil")
+		if err != nil {
+			t.Fatalf("Execute should not error on degraded fallback, got: %v", err)
+		}
+
+		if resp.Decision != v1.Decision_DECISION_ERROR {
+			t.Errorf("Decision = %v, want DECISION_ERROR (timeout → all caches empty)", resp.Decision)
+		}
+		if resp.DegradedConfidence != 0 {
+			t.Errorf("DegradedConfidence = %f, want 0", resp.DegradedConfidence)
+		}
+		if resp.ContentHash != blake3Hash {
+			t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
 		}
 	})
 }

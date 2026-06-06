@@ -32,12 +32,12 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Core Capabilities (PR 2)
 
-- [ ] 2.1 Add `lastChanceRecheck(L1→L2→L3)` fallback path in `engine/pipeline/pipeline.go` when WaveSpeed returns 429 or circuit-open; return `DECISION_ERROR` with `DegradedConfidence` on miss (spec R1.1-R1.4)
-- [ ] 2.2 Unit test pipeline 429 → cache re-check → `DECISION_ERROR` with mock analyzer in `engine/pipeline/pipeline_test.go` (spec S1, S2)
-- [ ] 2.3 Create `cmd/ytdlp-sidecar/main.go`: HTTP server `GET /?url=` → exec yt-dlp `--print-json` → JSON; 30s timeout; gates `YTDLP_SIDECAR_ENABLED`/`YTDLP_SIDECAR_PORT` (spec R2.1-R2.5)
-- [ ] 2.4 Unit test ytdlp-sidecar: 200 on valid URL, 502 on crash, 503 on gate-off via `httptest.Server` (spec S1, S2, S3)
-- [ ] 2.5 Create `deployments/Dockerfile.ytdlp-sidecar`: multi-stage (golang:1.26-alpine build → jrottenberg/ffmpeg:7.1-ubuntu runtime)
-- [ ] 2.6 Add ytdlp-sidecar build service to `compose.yml`; replace `jauderho/yt-dlp` service
+- [x] 2.1 Add `lastChanceRecheck(L1→L2→L3)` fallback path in `engine/pipeline/pipeline.go` when WaveSpeed returns 429 or circuit-open; return `DECISION_ERROR` with `DegradedConfidence` on miss (spec R1.1-R1.4)
+- [x] 2.2 Unit test pipeline 429 → cache re-check → `DECISION_ERROR` with mock analyzer in `engine/pipeline/pipeline_test.go` (spec S1, S2)
+- [x] 2.3 Create `cmd/ytdlp-sidecar/main.go`: HTTP server `GET /?url=` → exec yt-dlp `--print-json` → JSON; 30s timeout; gates `YTDLP_SIDECAR_ENABLED`/`YTDLP_SIDECAR_PORT` (spec R2.1-R2.5)
+- [x] 2.4 Unit test ytdlp-sidecar: 200 on valid URL, 502 on crash, 503 on gate-off via `httptest.Server` (spec S1, S2, S3)
+- [x] 2.5 Create `deployments/Dockerfile.ytdlp-sidecar`: multi-stage (golang:1.26-alpine build → jrottenberg/ffmpeg:7.1-ubuntu runtime)
+- [x] 2.6 Add ytdlp-sidecar build service to `compose.yml`; replace `jauderho/yt-dlp` service
 
 ## Phase 3: Integration (PR 3)
 

@@ -235,11 +235,30 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 
 	result, err := p.analyzer.Analyze(ctx, imageURL, mimeType)
 	if err != nil {
-		slog.ErrorContext(ctx, "WaveSpeed analysis failed",
+		slog.WarnContext(ctx, "WaveSpeed analysis failed, attempting last-chance cache recheck",
 			"error", err,
 			"workspace_id", req.WorkspaceId,
 		)
-		return nil, fmt.Errorf("pipeline wavespeed: %w", err)
+
+		// Graceful degradation: re-check L1→L2→L3 caches — another
+		// concurrent request may have populated them while we waited.
+		if degradeResp, degradedOk := p.lastChanceRecheck(ctx, l1Hash, ph, time.Since(start)); degradedOk {
+			return degradeResp, nil
+		}
+
+		// Total cache miss after error → DECISION_ERROR with zero confidence.
+		slog.ErrorContext(ctx, "WaveSpeed failed, all caches empty",
+			"error", err,
+			"blake3", l1Hash,
+			"workspace_id", req.WorkspaceId,
+		)
+		return &v1.AnalyzeResponse{
+			Decision:           v1.Decision_DECISION_ERROR,
+			ContentHash:        l1Hash,
+			CacheLevel:         v1.CacheLevel_CACHE_LEVEL_NONE,
+			DegradedConfidence: 0,
+			ProcessingMs:       time.Since(start).Milliseconds(),
+		}, nil
 	}
 
 	wsDuration := time.Since(wsStart)
@@ -273,6 +292,64 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 		CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
 		ProcessingMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// lastChanceRecheck performs a final cache sweep L1→L2→L3 after WaveSpeed
+// has failed. Another concurrent request may have populated the caches while
+// this request was blocked on the Bulkhead. If any level hits, the cached
+// decision is returned with degraded_confidence set to the cached confidence.
+//
+// Returns (nil, false) if all caches miss — the caller should then return
+// DECISION_ERROR with DegradedConfidence=0.
+func (p *pipeline) lastChanceRecheck(ctx context.Context, l1Hash string, ph uint64, elapsed time.Duration) (*v1.AnalyzeResponse, bool) {
+	// L1 re-check: exact BLAKE3 match
+	if d, ok := p.l1cache.GetL1(ctx, l1Hash); ok {
+		slog.InfoContext(ctx, "degraded fallback: L1 cache hit",
+			"hash", l1Hash,
+			"category", d.Category,
+		)
+		resp := buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3, l1Hash, elapsed)
+		resp.DegradedConfidence = d.Confidence
+		resp.Decision = d.Decision
+		return resp, true
+	}
+
+	// L2 re-check: perceptual pHash match
+	if results, err := p.l2cache.GetL2(ctx, ph, hasher.HammingThreshold); err != nil {
+		slog.WarnContext(ctx, "degraded fallback: L2 cache unavailable",
+			"error", err,
+			"phash", fmt.Sprintf("%016x", ph),
+		)
+	} else if len(results) > 0 {
+		slog.InfoContext(ctx, "degraded fallback: L2 cache hit",
+			"phash", fmt.Sprintf("%016x", ph),
+			"category", results[0].Category,
+		)
+		resp := buildResponse(results[0], v1.CacheLevel_CACHE_LEVEL_L2_PHASH, l1Hash, elapsed)
+		resp.DegradedConfidence = results[0].Confidence
+		resp.Decision = results[0].Decision
+		return resp, true
+	}
+
+	// L3 re-check: Weaviate vector search
+	if p.weaviateClient != nil {
+		if d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92); err != nil {
+			slog.WarnContext(ctx, "degraded fallback: L3 Weaviate unavailable",
+				"error", err,
+			)
+		} else if d != nil {
+			slog.InfoContext(ctx, "degraded fallback: L3 cache hit",
+				"content_hash", l1Hash,
+				"category", d.Category,
+			)
+			resp := buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE, l1Hash, elapsed)
+			resp.DegradedConfidence = d.Confidence
+			resp.Decision = d.Decision
+			return resp, true
+		}
+	}
+
+	return nil, false
 }
 
 // backPopulate stores the WaveSpeed decision in L1, L2, and L3 caches.

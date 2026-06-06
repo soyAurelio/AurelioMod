@@ -1,0 +1,55 @@
+# ytdlp-sidecar — Sandboxed HTTP wrapper around yt-dlp CLI
+# Multi-stage build: Go binary on Alpine → ffmpeg runtime with yt-dlp.
+#
+# The jrottenberg/ffmpeg:7.1-ubuntu runtime already includes yt-dlp,
+# FFmpeg, and all required shared libraries — a single base image
+# keeps the supply chain surface minimal (design §Architecture Decisions).
+#
+# Stages:
+#   1. builder  — golang:1.26-alpine  → compile Go binary (CGO_ENABLED=0)
+#   2. runtime  — jrottenberg/ffmpeg  → final image
+
+# === Stage 1: Build Go binary ===
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache ca-certificates git
+
+WORKDIR /src
+
+# Cache dependency layer
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build only the sidecar binary
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" \
+    -o /bin/ytdlp-sidecar ./cmd/ytdlp-sidecar
+
+# === Stage 2: Runtime — FFmpeg base + sidecar binary ===
+FROM jrottenberg/ffmpeg:7.1-ubuntu AS runtime
+
+# Copy the Go binary
+COPY --from=builder /bin/ytdlp-sidecar /usr/bin/ytdlp-sidecar
+
+# Install ca-certificates for HTTPS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget && rm -rf /var/lib/apt/lists/*
+
+# Expose HTTP port
+EXPOSE 8080
+
+# OCI-compliant labels
+LABEL org.opencontainers.image.title="AurelioMod ytdlp-sidecar"
+LABEL org.opencontainers.image.description="Sandboxed HTTP wrapper around yt-dlp for URL content fetching"
+LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.source="https://github.com/soyAurelio/AurelioMod"
+LABEL org.opencontainers.image.licenses="UNLICENSED"
+LABEL org.opencontainers.image.vendor="AurelioMod"
+LABEL org.opencontainers.image.created="2026-06-06"
+
+# Health check: verify the sidecar is responding (gate on)
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
+    CMD ["wget", "--no-verbose", "--tries=1", "--spider", "--timeout=3", "http://localhost:8080/healthz"]
+
+ENTRYPOINT ["/usr/bin/ytdlp-sidecar"]
