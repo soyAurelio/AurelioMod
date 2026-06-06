@@ -204,4 +204,3 @@ func IsDiscordCDN(rawURL string) bool {
 	return strings.Contains(host, "cdn.discordapp.com") ||
 		strings.Contains(host, "media.discordapp.net")
 }
-}
