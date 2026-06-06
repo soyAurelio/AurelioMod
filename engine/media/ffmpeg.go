@@ -15,6 +15,12 @@ type FFmpegRunner interface {
 	// Run executes FFmpeg with args and stdin bytes, returning stdout bytes.
 	// The context deadline controls the sandbox wall-time limit.
 	Run(ctx context.Context, args []string, stdin []byte) ([]byte, error)
+
+	// ExtractFrames extracts up to maxFrames PNG frames from a video file
+	// starting at timestampSec. Each frame is extracted sequentially at
+	// 1-second intervals (timestampSec, timestampSec+1, ...).
+	// Returns a slice of PNG-encoded frame bytes.
+	ExtractFrames(ctx context.Context, inputPath string, timestampSec int, maxFrames int) ([][]byte, error)
 }
 
 // Compile-time interface check for NsJailFFmpeg.
@@ -60,6 +66,52 @@ func (n *NsJailFFmpeg) Run(ctx context.Context, args []string, stdin []byte) ([]
 	}
 
 	return stdout.Bytes(), nil
+}
+
+// ExtractFrames extracts up to maxFrames PNG frames from a video file
+// at 1-second intervals starting from timestampSec. Each frame is a
+// separate ffmpeg invocation to ensure clean PNG boundaries.
+//
+// Frames are extracted sequentially (one ffmpeg call per frame) per
+// the design decision: Bulkhead(1) on WaveSpeed means no parallelism
+// benefit from concurrent extraction.
+func (n *NsJailFFmpeg) ExtractFrames(ctx context.Context, inputPath string, timestampSec int, maxFrames int) ([][]byte, error) {
+	if maxFrames < 1 {
+		return nil, nil
+	}
+
+	frames := make([][]byte, 0, maxFrames)
+
+	for i := 0; i < maxFrames; i++ {
+		// Check context before each extraction
+		select {
+		case <-ctx.Done():
+			return frames, ctx.Err()
+		default:
+		}
+
+		offsetSec := timestampSec + i
+		args := []string{
+			"-ss", fmt.Sprintf("%d", offsetSec),
+			"-i", inputPath,
+			"-vframes", "1",
+			"-f", "image2pipe",
+			"-vcodec", "png",
+			"pipe:1",
+		}
+
+		pngBytes, err := n.Run(ctx, args, nil)
+		if err != nil {
+			// Partial failure: return what we have + the error.
+			// Spec R3.6: "If frame extraction fails, Engine SHALL
+			// return partial results with success frames only."
+			return frames, fmt.Errorf("extract frame %d at %ds: %w", i, offsetSec, err)
+		}
+
+		frames = append(frames, pngBytes)
+	}
+
+	return frames, nil
 }
 
 // buildNsJailArgs constructs the nsjail command-line arguments for

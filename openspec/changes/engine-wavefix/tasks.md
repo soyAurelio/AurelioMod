@@ -41,13 +41,13 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Integration (PR 3)
 
-- [ ] 3.1 Add `ExtractFrames(ctx, inputPath, timestampSec, maxFrames int) ([][]byte, error)` to `FFmpegRunner` interface and `NsJailFFmpeg` in `engine/media/ffmpeg.go` (spec R3.3)
-- [ ] 3.2 Create `engine/media/urlframes.go` with `ParseTimestamp(url) (int, bool)` and `ExtractAndAnalyze(ctx, ffmpeg, pipe, url, ts)` orchestrator (spec R3.2, R3.4)
-- [ ] 3.3 Add YouTube domain + `CONTENT_TYPE_EXTERNAL_URL` detection and frame extraction path to `engine/pipeline/pipeline.go`; gate `EXTRACT_FRAMES_ENABLED` (spec R3.1, R3.5)
-- [ ] 3.4 Unit test `ParseTimestamp` edge cases and ffmpeg arg construction in `engine/media/urlframes_test.go` (spec S1, S2)
-- [ ] 3.5 Create `edge/discord/listener/listener.go`: Discord gateway listener, detect CDN URLs on MESSAGE_CREATE, download bytes via `http.Get`, pass `RawBytes` to Engine (spec R4.1-R4.3)
-- [ ] 3.6 Create `cmd/edge-discord/main.go`: wire listener to Engine RPC, env gates (`ATTACHMENT_ANALYSIS_ENABLED`), structured slog (spec R4.4, R4.5)
-- [ ] 3.7 Integration test Discord CDN download with `httptest.NewServer` serving test attachment (spec S1, S2)
+- [x] 3.1 Add `ExtractFrames(ctx, inputPath, timestampSec, maxFrames int) ([][]byte, error)` to `FFmpegRunner` interface and `NsJailFFmpeg` in `engine/media/ffmpeg.go` (spec R3.3)
+- [x] 3.2 Create `engine/media/urlframes.go` with `ParseTimestamp(url) (int, bool)` and `DownloadAndExtractFrames(ctx, videoURL, ts, maxFrames, ffmpeg)` orchestrator (spec R3.2, R3.4)
+- [x] 3.3 Add YouTube domain + `CONTENT_TYPE_EXTERNAL_URL` detection and frame extraction path to `engine/pipeline/pipeline.go`; gate `EXTRACT_FRAMES_ENABLED` (spec R3.1, R3.5)
+- [x] 3.4 Unit test `ParseTimestamp` edge cases and ffmpeg arg construction in `engine/media/urlframes_test.go` (spec S1, S2)
+- [x] 3.5 Create `edge/discord/listener/listener.go`: Discord gateway listener, detect CDN URLs on MESSAGE_CREATE, download bytes via `http.Get`, pass `RawBytes` to Engine (spec R4.1-R4.3)
+- [x] 3.6 Create `cmd/edge-discord/main.go`: wire listener to Engine RPC, env gates (`ATTACHMENT_ANALYSIS_ENABLED`), structured slog (spec R4.4, R4.5)
+- [x] 3.7 Integration test Discord CDN download with `httptest.NewServer` serving test attachment (spec S1, S2)
 
 ## Phase 4: Verification
 

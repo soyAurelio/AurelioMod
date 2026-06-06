@@ -271,3 +271,7 @@ func (m *mockRunner) Run(ctx context.Context, args []string, stdin []byte) ([]by
 	m.callCount++
 	return m.fn(ctx, args, stdin)
 }
+
+func (m *mockRunner) ExtractFrames(_ context.Context, _ string, _ int, _ int) ([][]byte, error) {
+	return nil, nil
+}

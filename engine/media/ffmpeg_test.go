@@ -145,9 +145,17 @@ type mockFFmpegRunner struct {
 	stdout  []byte
 	err     error
 	lastCtx context.Context
+
+	// ExtractFrames return values
+	extractFramesData [][]byte
+	extractFramesErr  error
 }
 
 func (m *mockFFmpegRunner) Run(ctx context.Context, _ []string, _ []byte) ([]byte, error) {
 	m.lastCtx = ctx
 	return m.stdout, m.err
+}
+
+func (m *mockFFmpegRunner) ExtractFrames(_ context.Context, _ string, _ int, _ int) ([][]byte, error) {
+	return m.extractFramesData, m.extractFramesErr
 }

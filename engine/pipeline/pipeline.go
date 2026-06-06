@@ -16,6 +16,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +55,11 @@ type DecisionHook func(ctx context.Context, workspaceID, contentHash, decision, 
 // inverted quarantine state machine (PENDING → BLOCKED | RELEASED).
 type QuarantineHook func(ctx context.Context, contentID, decision, category string, confidence float64)
 
+// FrameExtractor downloads video from a URL and extracts frame bytes.
+// Implementations handle YouTube via yt-dlp + FFmpeg.
+// Returns the extracted PNG frame bytes.
+type FrameExtractor func(ctx context.Context, videoURL string, timestampSec, maxFrames int) ([][]byte, error)
+
 // PipelineOption configures optional pipeline behavior.
 type PipelineOption func(*pipeline)
 
@@ -70,12 +78,23 @@ func WithQuarantineHook(h QuarantineHook) PipelineOption {
 	return func(p *pipeline) { p.quarantineHook = h }
 }
 
+// WithFrameExtractor sets the frame extraction function for YouTube URL analysis.
+// When nil (default), EXTERNAL_URL content falls through to standard analysis
+// (URL is treated as text, not downloadable content).
+func WithFrameExtractor(fe FrameExtractor) PipelineOption {
+	return func(p *pipeline) { p.frameExtractor = fe }
+}
+
 type pipeline struct {
 	l1cache        cache.L1Cache
 	l2cache        cache.L2Cache
 	normalizer     ContentNormalizer
 	analyzer       analyzer.Analyzer
 	weaviateClient weaviate.WeaviateClient
+
+	// Optional capabilities
+	frameExtractor      FrameExtractor // YouTube frame extraction (nil = disabled)
+	extractFramesEnabled bool          // EXTRACT_FRAMES_ENABLED env gate
 
 	// Integration hooks (fire-and-forget, non-blocking)
 	auditHook      AuditHook
@@ -102,11 +121,12 @@ func New(
 	opts ...PipelineOption,
 ) Pipeline {
 	p := &pipeline{
-		l1cache:        l1,
-		l2cache:        l2,
-		normalizer:     norm,
-		analyzer:       a,
-		weaviateClient: wv,
+		l1cache:              l1,
+		l2cache:              l2,
+		normalizer:           norm,
+		analyzer:             a,
+		weaviateClient:       wv,
+		extractFramesEnabled: envBool("EXTRACT_FRAMES_ENABLED", false),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -115,183 +135,34 @@ func New(
 }
 
 // Execute runs the normalization → L1 → L2 → L3 → WaveSpeed cascade.
+//
+// When content_type is CONTENT_TYPE_EXTERNAL_URL with a YouTube domain and
+// EXTRACT_FRAMES_ENABLED=true, Execute extracts video frames via the configured
+// FrameExtractor and analyzes each frame individually (spec R3.1).
 func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.AnalyzeResponse, error) {
 	start := time.Now()
 
-	// Step 1: Normalize raw bytes into RGB24 pixel data
-	normalized, err := p.normalizer.Normalize(ctx, req.RawBytes)
-	if err != nil {
-		slog.ErrorContext(ctx, "normalization failed",
-			"error", err,
-			"workspace_id", req.WorkspaceId,
-			"content_id", req.ContentId,
-		)
-		return nil, fmt.Errorf("pipeline normalize: %w", err)
-	}
-	pixels := normalized.RGBPixels
+	// External URL frame extraction path (spec R3.1, R3.5)
+	if req.ContentType == v1.ContentType_CONTENT_TYPE_EXTERNAL_URL &&
+		p.frameExtractor != nil &&
+		p.extractFramesEnabled {
 
-	// Step 2: Compute BLAKE3 hash over raw pixels (deterministic, used as L1 key)
-	l1Hash := hasher.HashL1(pixels)
-	ph := hasher.PHash(pixels)
-
-	// Step 3: Check L1 cache (exact match)
-	if d, ok := p.l1cache.GetL1(ctx, l1Hash); ok {
-		slog.InfoContext(ctx, "L1 cache hit",
-			"hash", l1Hash,
-			"category", d.Category,
-			"workspace_id", req.WorkspaceId,
-		)
-		return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3, l1Hash, time.Since(start)), nil
-	}
-
-	// L1 miss
-	slog.DebugContext(ctx, "L1 cache miss",
-		"blake3", l1Hash,
-		"workspace_id", req.WorkspaceId,
-	)
-
-	// Step 4: Check L2 cache (perceptual match within Hamming ≤ 5)
-	l2Start := time.Now()
-	results, err := p.l2cache.GetL2(ctx, ph, hasher.HammingThreshold)
-	if err != nil {
-		slog.WarnContext(ctx, "L2 cache unavailable, proceeding as miss",
-			"error", err,
-			"phash", fmt.Sprintf("%016x", ph),
-			"workspace_id", req.WorkspaceId,
-		)
-	} else if len(results) > 0 {
-		slog.InfoContext(ctx, "L2 cache hit",
-			"phash", fmt.Sprintf("%016x", ph),
-			"category", results[0].Category,
-			"duration_ms", time.Since(l2Start).Milliseconds(),
-			"workspace_id", req.WorkspaceId,
-		)
-		return buildResponse(results[0], v1.CacheLevel_CACHE_LEVEL_L2_PHASH, l1Hash, time.Since(start)), nil
-	}
-
-	slog.DebugContext(ctx, "L2 cache miss",
-		"phash", fmt.Sprintf("%016x", ph),
-		"duration_ms", time.Since(l2Start).Milliseconds(),
-		"workspace_id", req.WorkspaceId,
-	)
-
-	// Step 5: Check L3 cache (Weaviate vector search) — if available
-	if p.weaviateClient != nil {
-		l3Start := time.Now()
-		d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92)
-		if err != nil {
-			slog.WarnContext(ctx, "L3 Weaviate unavailable, skipping to WaveSpeed",
-				"error", err,
-				"workspace_id", req.WorkspaceId,
-			)
-		} else if d != nil {
-			slog.InfoContext(ctx, "L3 cache hit",
-				"content_hash", l1Hash,
-				"category", d.Category,
-				"duration_ms", time.Since(l3Start).Milliseconds(),
-				"workspace_id", req.WorkspaceId,
-			)
-			return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE, l1Hash, time.Since(start)), nil
-		} else {
-			slog.DebugContext(ctx, "L3 cache miss",
-				"content_hash", l1Hash,
-				"duration_ms", time.Since(l3Start).Milliseconds(),
-				"workspace_id", req.WorkspaceId,
-			)
+		videoURL := string(req.RawBytes)
+		if isYouTubeURL(videoURL) {
+			ts, ok := parseTimestampParam(videoURL)
+			if ok {
+				slog.InfoContext(ctx, "youtube frame extraction triggered",
+					"url", videoURL,
+					"timestamp_sec", ts,
+					"workspace_id", req.WorkspaceId,
+				)
+				return p.executeFrameExtraction(ctx, req, videoURL, ts, start)
+			}
 		}
 	}
 
-	// Step 6: WaveSpeed analysis (final fallback) — if available
-	if p.analyzer == nil {
-		// No analyzer configured — return QUEUED for downstream
-		slog.InfoContext(ctx, "cache miss, no analyzer configured",
-			"blake3", l1Hash,
-			"phash", fmt.Sprintf("%016x", ph),
-			"workspace_id", req.WorkspaceId,
-		)
-		return &v1.AnalyzeResponse{
-			Decision:     v1.Decision_DECISION_QUEUED,
-			ContentHash:  l1Hash,
-			CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
-			ProcessingMs: time.Since(start).Milliseconds(),
-		}, nil
-	}
-
-	slog.InfoContext(ctx, "all caches missed, calling WaveSpeed",
-		"blake3", l1Hash,
-		"workspace_id", req.WorkspaceId,
-	)
-
-	wsStart := time.Now()
-	mimeType := normalized.MIMEType
-	if mimeType == "" {
-		mimeType = "image/jpeg" // default when MIME detection fails
-	}
-
-	// The imageURL is the content hash — we don't have a real URL yet.
-	// In production, the Edge bot provides the public URL via a separate field.
-	// For now, pass the hash as a placeholder.
-	imageURL := fmt.Sprintf("https://storage.aureliomod.dev/%s", l1Hash)
-
-	result, err := p.analyzer.Analyze(ctx, imageURL, mimeType)
-	if err != nil {
-		slog.WarnContext(ctx, "WaveSpeed analysis failed, attempting last-chance cache recheck",
-			"error", err,
-			"workspace_id", req.WorkspaceId,
-		)
-
-		// Graceful degradation: re-check L1→L2→L3 caches — another
-		// concurrent request may have populated them while we waited.
-		if degradeResp, degradedOk := p.lastChanceRecheck(ctx, l1Hash, ph, time.Since(start)); degradedOk {
-			return degradeResp, nil
-		}
-
-		// Total cache miss after error → DECISION_ERROR with zero confidence.
-		slog.ErrorContext(ctx, "WaveSpeed failed, all caches empty",
-			"error", err,
-			"blake3", l1Hash,
-			"workspace_id", req.WorkspaceId,
-		)
-		return &v1.AnalyzeResponse{
-			Decision:           v1.Decision_DECISION_ERROR,
-			ContentHash:        l1Hash,
-			CacheLevel:         v1.CacheLevel_CACHE_LEVEL_NONE,
-			DegradedConfidence: 0,
-			ProcessingMs:       time.Since(start).Milliseconds(),
-		}, nil
-	}
-
-	wsDuration := time.Since(wsStart)
-	slog.InfoContext(ctx, "WaveSpeed analysis complete",
-		"decision", result.Decision,
-		"confidence", result.Confidence,
-		"duration_ms", wsDuration.Milliseconds(),
-		"workspace_id", req.WorkspaceId,
-	)
-
-	// Convert WaveSpeed result to a CachedDecision for back-population
-	cached := &cache.CachedDecision{
-		Decision:   decisionFromBool(result.Decision),
-		Confidence: result.Confidence,
-		Category:   dominantCategory(result.Categories),
-	}
-
-	// Step 7: Back-populate all cache layers (best-effort, non-blocking)
-	p.backPopulate(ctx, l1Hash, ph, cached)
-
-	// Step 8: Fire integration hooks (audit, NATS, quarantine) — fire-and-forget.
-	// All hooks run in goroutines so they never block the response pipeline.
-	p.fireHooks(ctx, req, l1Hash, cached, time.Since(start).Milliseconds())
-
-	return &v1.AnalyzeResponse{
-		Decision:     cached.Decision,
-		BlockReason:  cached.Category,
-		Confidence:   cached.Confidence,
-		Category:     cached.Category,
-		ContentHash:  l1Hash,
-		CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
-		ProcessingMs: time.Since(start).Milliseconds(),
-	}, nil
+	// Standard path: normalize → L1 → L2 → L3 → WaveSpeed
+	return p.executeStandard(ctx, req, start)
 }
 
 // lastChanceRecheck performs a final cache sweep L1→L2→L3 after WaveSpeed
@@ -456,4 +327,233 @@ func (p *pipeline) fireHooks(ctx context.Context, req *v1.AnalyzeRequest, conten
 // Useful for graceful shutdown and testing.
 func (p *pipeline) Wait() {
 	p.wg.Wait()
+}
+
+// --- External URL frame extraction (spec §3) ---
+
+// isYouTubeURL returns true if the URL's host belongs to YouTube.
+func isYouTubeURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	return strings.Contains(host, "youtube.com") || strings.Contains(host, "youtu.be")
+}
+
+// parseTimestampParam extracts the t= query parameter in seconds.
+// Reuses media.ParseTimestamp via inline implementation to avoid
+// a package dependency cycle.
+func parseTimestampParam(rawURL string) (int, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0, false
+	}
+	raw := u.Query().Get("t")
+	if raw == "" {
+		return 0, false
+	}
+	if d, e := time.ParseDuration(raw); e == nil {
+		if secs := int(d.Seconds()); secs >= 0 {
+			return secs, true
+		}
+		return 0, false
+	}
+	// Fallback: raw integer
+	var secs int
+	if _, err := fmt.Sscanf(raw, "%d", &secs); err == nil && secs >= 0 {
+		return secs, true
+	}
+	return 0, false
+}
+
+// executeFrameExtraction extracts video frames from a YouTube URL and analyzes
+// each frame through the normal pipeline (normalize → L1 → L2 → L3 → WaveSpeed).
+// Results are aggregated: the most severe decision across all frames wins,
+// with the highest confidence reported (spec R3.4).
+func (p *pipeline) executeFrameExtraction(
+	ctx context.Context,
+	req *v1.AnalyzeRequest,
+	videoURL string,
+	timestampSec int,
+	start time.Time,
+) (*v1.AnalyzeResponse, error) {
+	const maxFrames = 3 // spec R3.3
+
+	frames, err := p.frameExtractor(ctx, videoURL, timestampSec, maxFrames)
+	if err != nil {
+		slog.ErrorContext(ctx, "frame extraction failed",
+			"url", videoURL,
+			"error", err,
+			"workspace_id", req.WorkspaceId,
+		)
+		return nil, fmt.Errorf("pipeline frame extraction: %w", err)
+	}
+
+	if len(frames) == 0 {
+		slog.WarnContext(ctx, "frame extraction produced zero frames",
+			"url", videoURL,
+			"workspace_id", req.WorkspaceId,
+		)
+		// Fall through to standard analysis with URL as content
+		return p.executeStandard(ctx, req, start)
+	}
+
+	// Analyze each frame individually through the full pipeline
+	var (
+		worstDecision  v1.Decision
+		worstCategory  string
+		highestConf    float64
+		anyFrameHit    bool
+		aggregateHash  string
+	)
+
+	for i, frame := range frames {
+		frameReq := &v1.AnalyzeRequest{
+			WorkspaceId:    req.WorkspaceId,
+			ContentId:      fmt.Sprintf("%s-frame-%d", req.ContentId, i),
+			RawBytes:       frame,
+			ContentType:    v1.ContentType_CONTENT_TYPE_IMAGE,
+			SourcePlatform: req.SourcePlatform,
+		}
+
+		resp, err := p.executeStandard(ctx, frameReq, time.Now())
+		if err != nil {
+			slog.WarnContext(ctx, "frame analysis failed, skipping",
+				"frame", i,
+				"error", err,
+			)
+			continue
+		}
+
+		anyFrameHit = true
+		aggregateHash = resp.ContentHash
+
+		// Keep the worst decision (BLOCK > ERROR > QUEUED > ALLOW)
+		if isMoreSevere(resp.Decision, worstDecision) {
+			worstDecision = resp.Decision
+			worstCategory = resp.Category
+		}
+
+		// Track highest confidence
+		if resp.Confidence > highestConf {
+			highestConf = resp.Confidence
+		}
+	}
+
+	if !anyFrameHit {
+		// Total failure on all frames (spec R3.6: partial results)
+		return &v1.AnalyzeResponse{
+			Decision:     v1.Decision_DECISION_ERROR,
+			ContentHash:  aggregateHash,
+			CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
+			ProcessingMs: time.Since(start).Milliseconds(),
+		}, nil
+	}
+
+	return &v1.AnalyzeResponse{
+		Decision:     worstDecision,
+		BlockReason:  worstCategory,
+		Confidence:   highestConf,
+		Category:     worstCategory,
+		ContentHash:  aggregateHash,
+		CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
+		ProcessingMs: time.Since(start).Milliseconds(),
+	}, nil
+}
+
+// executeStandard runs the standard pipeline from normalize through WaveSpeed.
+// Extracted as a separate method to be reusable from the frame extraction path.
+func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, start time.Time) (*v1.AnalyzeResponse, error) {
+	normalized, err := p.normalizer.Normalize(ctx, req.RawBytes)
+	if err != nil {
+		return nil, fmt.Errorf("normalize: %w", err)
+	}
+	pixels := normalized.RGBPixels
+	l1Hash := hasher.HashL1(pixels)
+	ph := hasher.PHash(pixels)
+
+	if d, ok := p.l1cache.GetL1(ctx, l1Hash); ok {
+		return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3, l1Hash, time.Since(start)), nil
+	}
+
+	results, err := p.l2cache.GetL2(ctx, ph, hasher.HammingThreshold)
+	if err != nil {
+		slog.WarnContext(ctx, "L2 cache unavailable", "error", err)
+	} else if len(results) > 0 {
+		return buildResponse(results[0], v1.CacheLevel_CACHE_LEVEL_L2_PHASH, l1Hash, time.Since(start)), nil
+	}
+
+	if p.weaviateClient != nil {
+		if d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92); err != nil {
+			slog.WarnContext(ctx, "L3 unavailable", "error", err)
+		} else if d != nil {
+			return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE, l1Hash, time.Since(start)), nil
+		}
+	}
+
+	if p.analyzer == nil {
+		return &v1.AnalyzeResponse{
+			Decision:     v1.Decision_DECISION_QUEUED,
+			ContentHash:  l1Hash,
+			CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
+			ProcessingMs: time.Since(start).Milliseconds(),
+		}, nil
+	}
+
+	result, err := p.analyzer.Analyze(ctx, fmt.Sprintf("https://storage.aureliomod.dev/%s", l1Hash), "image/jpeg")
+	if err != nil {
+		if degradeResp, degradedOk := p.lastChanceRecheck(ctx, l1Hash, ph, time.Since(start)); degradedOk {
+			return degradeResp, nil
+		}
+		return &v1.AnalyzeResponse{
+			Decision:           v1.Decision_DECISION_ERROR,
+			ContentHash:        l1Hash,
+			CacheLevel:         v1.CacheLevel_CACHE_LEVEL_NONE,
+			DegradedConfidence: 0,
+			ProcessingMs:       time.Since(start).Milliseconds(),
+		}, nil
+	}
+
+	cached := &cache.CachedDecision{
+		Decision:   decisionFromBool(result.Decision),
+		Confidence: result.Confidence,
+		Category:   dominantCategory(result.Categories),
+	}
+
+	p.backPopulate(ctx, l1Hash, ph, cached)
+	p.fireHooks(ctx, req, l1Hash, cached, time.Since(start).Milliseconds())
+
+	return &v1.AnalyzeResponse{
+		Decision:     cached.Decision,
+		BlockReason:  cached.Category,
+		Confidence:   cached.Confidence,
+		Category:     cached.Category,
+		ContentHash:  l1Hash,
+		CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
+		ProcessingMs: time.Since(start).Milliseconds(),
+	}, nil
+}
+
+// isMoreSevere returns true if newIs is more severe than current.
+// Severity: BLOCK(2) > ERROR(4) > QUEUED(3) > ALLOW(1) > UNSPECIFIED(0)
+func isMoreSevere(newDec, currentDec v1.Decision) bool {
+	severity := map[v1.Decision]int{
+		v1.Decision_DECISION_UNSPECIFIED: 0,
+		v1.Decision_DECISION_ALLOW:       1,
+		v1.Decision_DECISION_QUEUED:      2,
+		v1.Decision_DECISION_ERROR:       3,
+		v1.Decision_DECISION_BLOCK:       4,
+	}
+	return severity[newDec] > severity[currentDec]
+}
+
+// envBool reads a boolean environment variable with a default value.
+func envBool(key string, defaultVal bool) bool {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	val = strings.ToLower(strings.TrimSpace(val))
+	return val == "true" || val == "1" || val == "yes" || val == "on"
 }
