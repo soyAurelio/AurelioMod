@@ -63,6 +63,11 @@ func New(logger *slog.Logger) *Listener {
 // trigger analysis; plain text and oversize attachments are skipped.
 // Returns true if the message should be forwarded for analysis.
 func (l *Listener) OnMessageCreate(event *events.MessageCreate) bool {
+	// Never process bot messages (including our own).
+	if event.Message.Author.Bot {
+		return false
+	}
+
 	data := MessageData{
 		Content:  event.Message.Content,
 		GuildID:  guildIDString(event.Message.GuildID),

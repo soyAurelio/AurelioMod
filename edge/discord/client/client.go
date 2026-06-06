@@ -55,11 +55,14 @@ type client struct {
 var _ AnalysisClient = (*client)(nil)
 
 // NewClient creates an AnalysisClient connected to the Engine at engineURL.
-// The returned client uses a circuit breaker (5 failures/60s → 30s open)
-// and logs circuit_breaker_open when the breaker trips.
+// The returned client uses a circuit breaker (5 failures/60s → 30s open),
+// a 5-second HTTP timeout, and logs circuit_breaker_open when the breaker trips.
 func NewClient(engineURL string, logger *slog.Logger) AnalysisClient {
+	httpClient := &http.Client{
+		Timeout: 5 * time.Second,
+	}
 	raw := aureliomodv1connect.NewContentAnalysisServiceClient(
-		http.DefaultClient,
+		httpClient,
 		engineURL,
 	)
 	return newClientWithConfig(raw, logger, defaultConfig())
