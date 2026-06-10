@@ -21,20 +21,20 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/stripe/stripe-go/v84"
-	"github.com/stripe/stripe-go/v84/checkout/session"
-	"github.com/stripe/stripe-go/v84/webhook"
+	"github.com/stripe/stripe-go/v81"
+	"github.com/stripe/stripe-go/v81/checkout/session"
+	"github.com/stripe/stripe-go/v81/webhook"
 
-	portal "github.com/stripe/stripe-go/v84/billingportal/session"
+	portal "github.com/stripe/stripe-go/v81/billingportal/session"
 )
 
 // Handler manages Stripe billing operations.
 type Handler struct {
-	db           *sql.DB
-	secretKey    string
+	db             *sql.DB
+	secretKey      string
 	endpointSecret string
-	baseURL      string
-	priceIDs     map[string]string // plan → stripe price ID
+	baseURL        string
+	priceIDs       map[string]string // plan → stripe price ID
 }
 
 // New creates a billing Handler.
