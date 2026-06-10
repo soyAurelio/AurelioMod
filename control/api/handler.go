@@ -46,24 +46,24 @@ func New(db *sql.DB, tm TokenManager) *fiber.App {
 
 	// Auth (no middleware)
 	v1.Post("/auth/login", auth.HandleLogin)
-	v1.Post("/auth/refresh", authMiddleware(tm), auth.HandleRefresh)
+	v1.Post("/auth/refresh", AuthMiddleware(tm), auth.HandleRefresh)
 
 	// Workspaces (auth required)
-	v1.Get("/workspaces", authMiddleware(tm), workspaces.HandleList)
-	v1.Post("/workspaces", authMiddleware(tm), workspaces.HandleCreate)
-	v1.Get("/workspaces/:id", authMiddleware(tm), workspaces.HandleGet)
-	v1.Get("/workspaces/:id/stats", authMiddleware(tm), workspaces.HandleStats)
+	v1.Get("/workspaces", AuthMiddleware(tm), workspaces.HandleList)
+	v1.Post("/workspaces", AuthMiddleware(tm), workspaces.HandleCreate)
+	v1.Get("/workspaces/:id", AuthMiddleware(tm), workspaces.HandleGet)
+	v1.Get("/workspaces/:id/stats", AuthMiddleware(tm), workspaces.HandleStats)
 
 	// Decisions (auth required)
-	v1.Get("/workspaces/:id/decisions", authMiddleware(tm), decisions.HandleListDecisions)
-	v1.Get("/workspaces/:id/decisions/:audit_id", authMiddleware(tm), decisions.HandleGetDecision)
+	v1.Get("/workspaces/:id/decisions", AuthMiddleware(tm), decisions.HandleListDecisions)
+	v1.Get("/workspaces/:id/decisions/:audit_id", AuthMiddleware(tm), decisions.HandleGetDecision)
 
 	return app
 }
 
-// authMiddleware is a Fiber middleware that validates PASETO v4 Bearer tokens.
+// AuthMiddleware validates PASETO v4 Bearer tokens.
 // On success, it stores the workspace_id in c.Locals.
-func authMiddleware(tm TokenManager) fiber.Handler {
+func AuthMiddleware(tm TokenManager) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {

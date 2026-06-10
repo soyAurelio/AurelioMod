@@ -22,6 +22,7 @@ import (
 	_ "github.com/lib/pq"
 
 	controlapi "github.com/soyAurelio/AurelioMod/control/api"
+	"github.com/soyAurelio/AurelioMod/control/billing"
 	"github.com/soyAurelio/AurelioMod/internal/paseto"
 )
 
@@ -105,6 +106,26 @@ func main() {
 	// --- Fiber App (with PASETO adapter) ---
 	app := controlapi.New(db, &pasetoAdapter{tm})
 
+	// --- Stripe Billing (optional, gated by STRIPE_SECRET_KEY) ---
+	if stripeKey := os.Getenv("STRIPE_SECRET_KEY"); stripeKey != "" {
+		bh := billing.New(db, stripeKey,
+			os.Getenv("STRIPE_WEBHOOK_SECRET"),
+			os.Getenv("CONTROL_BASE_URL"),
+		)
+
+		// Billing routes (auth required)
+		authMW := controlapi.AuthMiddleware(&pasetoAdapter{tm})
+		app.Post("/v1/billing/checkout", authMW, bh.HandleCheckout)
+		app.Post("/v1/billing/portal", authMW, bh.HandlePortal)
+
+		// Stripe webhook (no auth — Stripe signs requests)
+		app.Post("/v1/webhooks/stripe", bh.HandleWebhook)
+
+		logger.Info("stripe billing enabled")
+	} else {
+		logger.Warn("STRIPE_SECRET_KEY not set — billing disabled")
+	}
+
 	// --- Signals ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -163,6 +184,8 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			name TEXT NOT NULL,
 			api_key TEXT NOT NULL UNIQUE,
 			plan TEXT NOT NULL DEFAULT 'bronze',
+			stripe_customer_id TEXT,
+			stripe_subscription_id TEXT,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
