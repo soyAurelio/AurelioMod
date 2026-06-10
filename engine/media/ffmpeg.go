@@ -21,6 +21,12 @@ type FFmpegRunner interface {
 	// 1-second intervals (timestampSec, timestampSec+1, ...).
 	// Returns a slice of PNG-encoded frame bytes.
 	ExtractFrames(ctx context.Context, inputPath string, timestampSec int, maxFrames int) ([][]byte, error)
+
+	// ExtractCollage detects key frames via scene-change detection and
+	// merges them into a single 3x3 grid collage JPEG. This reduces
+	// WaveSpeed API calls from N frames to 1 collage (~150KB).
+	// Returns JPEG-encoded collage bytes.
+	ExtractCollage(ctx context.Context, inputPath string) ([]byte, error)
 }
 
 // Compile-time interface check for NsJailFFmpeg.
@@ -112,6 +118,25 @@ func (n *NsJailFFmpeg) ExtractFrames(ctx context.Context, inputPath string, time
 	}
 
 	return frames, nil
+}
+
+// ExtractCollage detects key frames via scene-change detection (gt(scene,0.3))
+// and merges up to 9 frames into a single 3x3 grid collage JPEG (~150KB).
+// This reduces WaveSpeed API calls from N frames to 1 collage.
+//
+// Single ffmpeg invocation:
+//   ffmpeg -i input -vf "select='gt(scene,0.3)',scale=320:-1,tile=3x3"
+//          -vframes 1 -q:v 3 -f image2pipe pipe:1
+func (n *NsJailFFmpeg) ExtractCollage(ctx context.Context, inputPath string) ([]byte, error) {
+	args := []string{
+		"-i", inputPath,
+		"-vf", "select='gt(scene,0.3)',scale=320:-1,tile=3x3",
+		"-vframes", "1",
+		"-q:v", "3",
+		"-f", "image2pipe",
+		"pipe:1",
+	}
+	return n.Run(ctx, args, nil)
 }
 
 // buildNsJailArgs constructs the nsjail command-line arguments for

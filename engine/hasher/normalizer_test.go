@@ -275,3 +275,7 @@ func (m *mockRunner) Run(ctx context.Context, args []string, stdin []byte) ([]by
 func (m *mockRunner) ExtractFrames(_ context.Context, _ string, _ int, _ int) ([][]byte, error) {
 	return nil, nil
 }
+
+func (m *mockRunner) ExtractCollage(_ context.Context, _ string) ([]byte, error) {
+	return nil, nil
+}
