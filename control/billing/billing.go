@@ -136,6 +136,10 @@ func (h *Handler) HandlePortal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var customerID string
+	if h.db == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "workspace has no Stripe customer"})
+		return
+	}
 	err := h.db.QueryRowContext(r.Context(),
 		"SELECT stripe_customer_id FROM workspaces WHERE id = $1", req.WorkspaceID,
 	).Scan(&customerID)

@@ -32,9 +32,11 @@ func DefaultConfig() Config {
 }
 
 // Connect establishes a persistent connection to NATS with auto-reconnect.
+// Uses a 5-second timeout so the caller doesn't block indefinitely.
 func Connect(cfg Config) (*Client, error) {
 	nc, err := nats.Connect(cfg.URL,
 		nats.Name("aureliomod"),
+		nats.Timeout(5*time.Second),
 		nats.ReconnectWait(2*time.Second),
 		nats.MaxReconnects(-1),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {

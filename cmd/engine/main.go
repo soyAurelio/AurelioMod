@@ -200,17 +200,20 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		"sandbox", sandboxEnabled,
 	)
 
-	// Web Risk URL reputation service (best-effort).
-	// When WEBRISK_ENABLED=true but no credentials are available (ADC missing
-	// or WEBRISK_API_KEY unset), the service starts disabled with a warning
-	// instead of failing startup. This enables development/testing without
-	// Google Cloud credentials.
+	// Web Risk URL reputation service.
+	// By default, WebRisk is best-effort: if credentials are unavailable, the
+	// service starts disabled and logs a warning. Set WEBRISK_REQUIRED=true in
+	// production to force a fatal error when URL safety cannot be initialized.
 	wrEnabled := os.Getenv("WEBRISK_ENABLED") != "false" // default: true
+	wrRequired := os.Getenv("WEBRISK_REQUIRED") == "true"  // default: false
 	wrService, err := safety.NewWebRiskService(ctx, safety.WebRiskConfig{
 		RDB:     cacheClient.RDB(),
 		Enabled: wrEnabled,
 	})
 	if err != nil {
+		if wrRequired {
+			return nil, fmt.Errorf("WEBRISK_REQUIRED=true but webrisk init failed: %w", err)
+		}
 		slog.WarnContext(ctx, "webrisk init failed — URL safety checks disabled",
 			"error", err,
 		)
@@ -286,29 +289,32 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	auditEmitter := audit.NewMultiEmitter(auditLogger, neonStore, r2Store)
 
-	// NATS decision publisher (optional)
+	// NATS decision publisher (best-effort — Engine starts without NATS)
 	var decisionHook pipeline.DecisionHook
 	if cfg.NATSURL != "" {
 		natClient, err := internalnats.Connect(internalnats.Config{
 			URL: cfg.NATSURL,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("nats connect: %w", err)
-		}
-		natPublisher := engineNats.NewNATSPublisher(natClient.Conn())
-		slog.InfoContext(ctx, "nats connected", "url", cfg.NATSURL)
+			slog.WarnContext(ctx, "nats connect failed — decision publishing disabled",
+				"error", err,
+			)
+		} else {
+			natPublisher := engineNats.NewNATSPublisher(natClient.Conn())
+			slog.InfoContext(ctx, "nats connected", "url", cfg.NATSURL)
 
-		decisionHook = func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64) {
-			evt := &engineNats.DecisionEvent{
-				DecisionID:  fmt.Sprintf("dec_%s_%d", contentHash[:12], time.Now().UnixNano()),
-				WorkspaceID: workspaceID,
-				ContentHash: contentHash,
-				Decision:    decision,
-				Category:    category,
-				Confidence:  confidence,
-				Timestamp:   time.Now(),
+			decisionHook = func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64) {
+				evt := &engineNats.DecisionEvent{
+					DecisionID:  fmt.Sprintf("dec_%s_%d", contentHash[:12], time.Now().UnixNano()),
+					WorkspaceID: workspaceID,
+					ContentHash: contentHash,
+					Decision:    decision,
+					Category:    category,
+					Confidence:  confidence,
+					Timestamp:   time.Now(),
+				}
+				_ = natPublisher.PublishDecision(ctx, evt)
 			}
-			_ = natPublisher.PublishDecision(ctx, evt)
 		}
 	} else {
 		slog.WarnContext(ctx, "NATS_URL not set — decision publishing disabled")
