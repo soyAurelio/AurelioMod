@@ -111,7 +111,10 @@ func (h *Handler) HandleCheckout(w http.ResponseWriter, r *http.Request) {
 	s, err := session.New(params)
 	if err != nil {
 		slog.Error("stripe checkout create failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "checkout creation failed"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error":  "checkout creation failed",
+			"detail": err.Error(),
+		})
 		return
 	}
 
