@@ -149,6 +149,27 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
 
+  # === API Gateway (KrakenD Community Edition) ===
+  krakend:
+    image: devopsfaith/krakend:2.9.3
+    container_name: aureliomod-krakend
+    ports:
+      - "8080:8080"
+    command: run -c /etc/krakend/krakend.json
+    volumes:
+      - ./deployments/krakend.json:/etc/krakend/krakend.json:ro
+    depends_on:
+      control:
+        condition: service_started
+      engine:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/__health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
   # === Content Analysis Engine (ConnectRPC) ===
   engine:
     build:

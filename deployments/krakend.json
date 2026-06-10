@@ -1,0 +1,260 @@
+{
+  "version": 3,
+  "name": "AurelioMod API Gateway",
+  "port": 8080,
+  "timeout": "10s",
+  "cache_ttl": "0s",
+  "host": [
+    "0.0.0.0"
+  ],
+  "extra_config": {
+    "telemetry/logging": {
+      "level": "ERROR",
+      "stdout": true,
+      "format": "json"
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint": "/healthz",
+      "method": "GET",
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/healthz"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/auth/login",
+      "method": "POST",
+      "input_headers": [
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/auth/login"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/auth/refresh",
+      "method": "POST",
+      "input_headers": [
+        "Authorization",
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/auth/refresh"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/workspaces",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 100,
+          "client_max_rate": 20,
+          "strategy": "ip"
+        }
+      },
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/workspaces",
+      "method": "POST",
+      "input_headers": [
+        "Authorization",
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/workspaces/{id}",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces/{id}"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/workspaces/{id}/stats",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces/{id}/stats"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/workspaces/{id}/decisions",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces/{id}/decisions"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/workspaces/{id}/decisions/{audit_id}",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces/{id}/decisions/{audit_id}"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/billing/checkout",
+      "method": "POST",
+      "input_headers": [
+        "Authorization",
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/billing/checkout"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/billing/portal",
+      "method": "POST",
+      "input_headers": [
+        "Authorization",
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/billing/portal"
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/webhooks/stripe",
+      "method": "POST",
+      "input_headers": [
+        "Content-Type",
+        "Stripe-Signature"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/webhooks/stripe"
+        }
+      ]
+    },
+    {
+      "endpoint": "/billing/success",
+      "method": "GET",
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/billing/success"
+        }
+      ]
+    },
+    {
+      "endpoint": "/billing/cancel",
+      "method": "GET",
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/billing/cancel"
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/engine/analyze",
+      "method": "POST",
+      "input_headers": [
+        "Content-Type"
+      ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 200,
+          "client_max_rate": 45,
+          "strategy": "ip"
+        },
+        "qos/circuit-breaker": {
+          "interval": 60,
+          "timeout": 30,
+          "max_errors": 5,
+          "name": "engine-cb"
+        }
+      },
+      "backend": [
+        {
+          "host": [
+            "http://engine:8080"
+          ],
+          "url_pattern": "/aureliomod.v1.ContentAnalysisService/Analyze"
+        }
+      ]
+    }
+  ]
+}
