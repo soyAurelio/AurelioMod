@@ -333,8 +333,8 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	// --- Build pipeline ---
 	pipe := pipeline.New(
-		cacheClient,   // L1 + L2 cache
-		cacheClient,   // L2 cache (same DragonflyDB client)
+		cacheClient, // L1 + L2 cache
+		cacheClient, // L2 cache (same DragonflyDB client)
 		normalizer,
 		waveSpeed,
 		wvClient,
@@ -383,5 +383,3 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
-
-

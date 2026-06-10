@@ -11,9 +11,9 @@ import (
 // Login: workspace provides api_key → valid for 24h.
 // Refresh: valid token → new 24h token.
 type AuthHandler struct {
-	db          *sql.DB
-	tokenMgr    TokenManager
-	tokenTTL    time.Duration
+	db       *sql.DB
+	tokenMgr TokenManager
+	tokenTTL time.Duration
 }
 
 // TokenManager abstracts PASETO token operations for auth.

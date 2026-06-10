@@ -21,12 +21,13 @@ import (
 // concurrent task limits (source: https://wavespeed.ai/docs/account-levels).
 //
 // Tiers are unlocked by cumulative top-up:
-//   bronze — free, default for new accounts
-//   silver — $100 total top-up
-//   gold   — $1,000 total top-up
-//   ultra  — $10,000 total top-up
+//
+//	bronze — free, default for new accounts
+//	silver — $100 total top-up
+//	gold   — $1,000 total top-up
+//	ultra  — $10,000 total top-up
 var waveSpeedPlanConcurrency = map[string]int{
-	"free":   3,    // same as bronze (conservative)
+	"free":   3, // same as bronze (conservative)
 	"bronze": 3,
 	"silver": 100,
 	"gold":   2000,
@@ -36,9 +37,9 @@ var waveSpeedPlanConcurrency = map[string]int{
 // WaveSpeedExecutor returns a failsafe Executor pre-configured for WaveSpeed API calls.
 //
 // Concurrency is resolved dynamically via resolveMaxConcurrent():
-//   1. WAVESPEED_MAX_CONCURRENT=N → explicit override (0 = disable Bulkhead)
-//   2. WAVESPEED_PLAN=tier        → look up in waveSpeedPlanConcurrency map
-//   3. Default                     → 3 (bronze tier — default for new accounts)
+//  1. WAVESPEED_MAX_CONCURRENT=N → explicit override (0 = disable Bulkhead)
+//  2. WAVESPEED_PLAN=tier        → look up in waveSpeedPlanConcurrency map
+//  3. Default                     → 3 (bronze tier — default for new accounts)
 //
 // Policies (applied outermost → innermost):
 //   - Bulkhead(N): gates concurrent WaveSpeed calls, rejects immediately when full
@@ -82,9 +83,9 @@ func WaveSpeedExecutor[R any]() failsafe.Executor[R] {
 
 // resolveMaxConcurrent determines the Bulkhead concurrency limit.
 // Resolution order:
-//   1. WAVESPEED_MAX_CONCURRENT=N → explicit number (0 = disable Bulkhead)
-//   2. WAVESPEED_PLAN=tier        → preset from waveSpeedPlanConcurrency
-//   3. Default                     → 3 (bronze tier — default for new accounts)
+//  1. WAVESPEED_MAX_CONCURRENT=N → explicit number (0 = disable Bulkhead)
+//  2. WAVESPEED_PLAN=tier        → preset from waveSpeedPlanConcurrency
+//  3. Default                     → 3 (bronze tier — default for new accounts)
 //
 // This allows changing the limit without code changes: switch plan tiers
 // as you top up, or override with an exact number.
