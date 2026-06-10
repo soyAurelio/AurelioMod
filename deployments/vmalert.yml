@@ -1,0 +1,50 @@
+# VictoriaMetrics Alerting Rules
+# Evaluates every 30s and sends alerts via webhook to Discord.
+groups:
+  - name: aureliomod
+    interval: 30s
+    rules:
+      # Engine health — critical if down > 1min
+      - alert: EngineDown
+        expr: up{job="engine"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Engine service is DOWN"
+          description: "Engine has been unreachable for 1 minute. No content analysis possible."
+
+      # WaveSpeed API errors — > 5 errors in 5min
+      - alert: WaveSpeedHighErrors
+        expr: rate(wavespeed_errors_total[5m]) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "High WaveSpeed API error rate"
+          description: "WaveSpeed errors: {{ $value }}/s. Check API key and circuit breaker state."
+
+      # High latency — p99 > 5s
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, rate(engine_analysis_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Engine analysis p99 > 5s"
+          description: "Analysis latency p99: {{ $value }}s. Content moderation may be degraded."
+
+      # Quota near exhaustion — < 10% remaining
+      - alert: QuotaNearExhaustion
+        expr: workspace_analysis_remaining / workspace_analysis_limit < 0.1
+        for: 15m
+        labels: { severity: info }
+        annotations:
+          summary: "Workspace {{ $labels.workspace_id }} quota near exhaustion"
+          description: "Remaining: {{ $value }}%. Consider upgrading plan."
+
+      # Neon DB connection failures
+      - alert: NeonDBConnectionFailures
+        expr: rate(neon_db_errors_total[5m]) > 3
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Neon DB connection errors"
+          description: "Database errors: {{ $value }}/s. Audit and workspace data may be lost."

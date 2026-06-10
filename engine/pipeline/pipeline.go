@@ -25,6 +25,7 @@ import (
 
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
+	"github.com/soyAurelio/AurelioMod/engine/telemetry"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
 	"github.com/soyAurelio/AurelioMod/internal/weaviate"
 	v1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
@@ -86,6 +87,12 @@ func WithFrameExtractor(fe FrameExtractor) PipelineOption {
 	return func(p *pipeline) { p.frameExtractor = fe }
 }
 
+// WithEngineMetrics sets the OpenTelemetry metrics recorder for the pipeline.
+// Records: analysis_total, analysis_duration, cache_hits/misses per level.
+func WithEngineMetrics(m *telemetry.EngineMetrics) PipelineOption {
+	return func(p *pipeline) { p.engineMetrics = m }
+}
+
 type pipeline struct {
 	l1cache        cache.L1Cache
 	l2cache        cache.L2Cache
@@ -101,6 +108,9 @@ type pipeline struct {
 	auditHook      AuditHook
 	decisionHook   DecisionHook
 	quarantineHook QuarantineHook
+
+	// Observability
+	engineMetrics *telemetry.EngineMetrics
 
 	wg sync.WaitGroup // tracks in-flight hook goroutines
 }

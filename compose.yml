@@ -148,6 +148,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./deployments/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/engine.json:ro
 
   # === API Gateway (KrakenD Community Edition) ===
   krakend:
