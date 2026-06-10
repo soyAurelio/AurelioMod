@@ -1,0 +1,30 @@
+# Multi-stage build for AurelioMod Control API.
+# golang:1.26-alpine → distroless/static (zero shell, minimal attack surface).
+
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /control ./cmd/control
+
+# Distroless static: no shell, no package manager, no vulnerabilities.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /control /control
+
+USER nonroot:nonroot
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+    CMD ["/control", "-healthcheck"] || exit 1
+
+ENTRYPOINT ["/control"]

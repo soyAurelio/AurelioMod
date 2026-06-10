@@ -268,7 +268,7 @@ func TestWaveSpeedExecutor_PlanGold(t *testing.T) {
 
 func TestWaveSpeedExecutor_PlanOverride(t *testing.T) {
 	// WAVESPEED_MAX_CONCURRENT overrides WAVESPEED_PLAN.
-	t.Setenv("WAVESPEED_PLAN", "gold")       // would be 2000
+	t.Setenv("WAVESPEED_PLAN", "gold")        // would be 2000
 	t.Setenv("WAVESPEED_MAX_CONCURRENT", "5") // overrides to 5
 	exec := WaveSpeedExecutor[string]()
 

@@ -34,9 +34,22 @@ func New() (*TokenManager, error) {
 	}, nil
 }
 
-// NewFromHex creates a TokenManager from an existing hex-encoded secret key.
+// NewFromHex creates a TokenManager from a hex-encoded secret key.
+// Accepts both:
+//   - 128 hex chars = 64-byte full Ed25519 secret key
+//   - 64 hex chars  = 32-byte seed (derives full key via ed25519.NewKeyFromSeed)
 func NewFromHex(secretKeyHex string) (*TokenManager, error) {
-	secretKey, err := pasetolib.NewV4AsymmetricSecretKeyFromHex(secretKeyHex)
+	var secretKey pasetolib.V4AsymmetricSecretKey
+	var err error
+
+	switch len(secretKeyHex) {
+	case 128: // full 64-byte key
+		secretKey, err = pasetolib.NewV4AsymmetricSecretKeyFromHex(secretKeyHex)
+	case 64: // 32-byte seed
+		secretKey, err = pasetolib.NewV4AsymmetricSecretKeyFromSeed(secretKeyHex)
+	default:
+		return nil, fmt.Errorf("parse secret key: invalid hex length %d, expected 64 (seed) or 128 (full key)", len(secretKeyHex))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parse secret key: %w", err)
 	}
