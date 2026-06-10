@@ -159,3 +159,7 @@ func (m *mockFFmpegRunner) Run(ctx context.Context, _ []string, _ []byte) ([]byt
 func (m *mockFFmpegRunner) ExtractFrames(_ context.Context, _ string, _ int, _ int) ([][]byte, error) {
 	return m.extractFramesData, m.extractFramesErr
 }
+
+func (m *mockFFmpegRunner) ExtractCollage(_ context.Context, _ string) ([]byte, error) {
+	return m.stdout, m.err
+}
