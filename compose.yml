@@ -165,7 +165,15 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/__health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/__health",
+        ]
       interval: 15s
       timeout: 3s
       retries: 3
@@ -280,6 +288,8 @@ services:
     environment:
       DISCORD_TOKEN: "${DISCORD_TOKEN:-}"
       ENGINE_URL: "http://engine:8080"
+      CONTROL_URL: "${CONTROL_URL:-http://control:8080}"
+      CONTROL_TOKEN: "${CONTROL_TOKEN:-}"
       REQUIRED_GUILD_ID: "${REQUIRED_GUILD_ID:-}"
       ENFORCE_MODERATION: "${ENFORCE_MODERATION:-true}"
       BOT_LANG: "${BOT_LANG:-es}"

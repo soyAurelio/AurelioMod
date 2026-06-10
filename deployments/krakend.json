@@ -255,6 +255,22 @@
           "url_pattern": "/aureliomod.v1.ContentAnalysisService/Analyze"
         }
       ]
+    },
+    {
+      "endpoint": "/v1/workspaces/{id}/consume",
+      "method": "POST",
+      "input_headers": [
+        "Authorization",
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "host": [
+            "http://control:8080"
+          ],
+          "url_pattern": "/v1/workspaces/{id}/consume"
+        }
+      ]
     }
   ]
 }

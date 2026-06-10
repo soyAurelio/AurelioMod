@@ -26,6 +26,7 @@ import (
 	"github.com/soyAurelio/AurelioMod/edge/discord/audit"
 	"github.com/soyAurelio/AurelioMod/edge/discord/client"
 	"github.com/soyAurelio/AurelioMod/edge/discord/commands"
+	edgecontrol "github.com/soyAurelio/AurelioMod/edge/discord/control"
 	discordhandler "github.com/soyAurelio/AurelioMod/edge/discord/handler"
 	"github.com/soyAurelio/AurelioMod/edge/discord/listener"
 	"github.com/soyAurelio/AurelioMod/edge/discord/ratelimit"
@@ -69,6 +70,13 @@ func main() {
 
 	// AnalysisClient: ConnectRPC to Engine with circuit breaker.
 	analysisClient := client.NewClient(engineURL, logger)
+
+	// PlanClient: Control API quota check before Engine analysis.
+	// Fails open — if Control API is unreachable, analysis proceeds.
+	planClient := edgecontrol.NewPlanClient(
+		os.Getenv("CONTROL_URL"),
+		os.Getenv("CONTROL_TOKEN"),
+	)
 
 	// Rate limiter: 45 req/s token bucket with 2s queue deadline.
 	limiter := ratelimit.NewLimiter(logger)
@@ -115,7 +123,7 @@ func main() {
 			switch e := event.(type) {
 			case *events.MessageCreate:
 				if l.OnMessageCreate(e) {
-					handleMessage(ctx, e, analysisClient, limiter, decisionHandler, workspaceID, logger)
+					handleMessage(ctx, e, analysisClient, planClient, limiter, decisionHandler, workspaceID, logger)
 				}
 
 			case *events.GuildJoin:
@@ -183,7 +191,7 @@ func main() {
 // 3. Build AnalyzeRequest with correct ContentType
 // 4. Call Engine Analyze
 // 5. Enforce decision
-func handleMessage(ctx context.Context, event *events.MessageCreate, analysisClient client.AnalysisClient, limiter ratelimit.Limiter, decisionHandler *discordhandler.Handler, workspaceID string, logger *slog.Logger) {
+func handleMessage(ctx context.Context, event *events.MessageCreate, analysisClient client.AnalysisClient, planClient *edgecontrol.PlanClient, limiter ratelimit.Limiter, decisionHandler *discordhandler.Handler, workspaceID string, logger *slog.Logger) {
 	// Rate limit check.
 	if err := limiter.Wait(ctx); err != nil {
 		return // dropped
@@ -263,6 +271,19 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 		RawBytes:       rawBytes,
 		ContentType:    contentType,
 		SourcePlatform: aureliomodv1.SourcePlatform_SOURCE_PLATFORM_DISCORD,
+	}
+
+	// Check plan quota before analysis (fails open if Control API unreachable)
+	if !planClient.Consume(ctx, workspaceID) {
+		logger.WarnContext(ctx, "analysis blocked by plan quota",
+			"workspace_id", workspaceID,
+		)
+		// Reuse block_reason from the handler for quota-exhausted messages
+		_ = decisionHandler.EnforceDecision(ctx, &event.Message,
+			aureliomodv1.Decision_DECISION_BLOCK,
+			"Plan quota exceeded — upgrade your plan to continue",
+		)
+		return
 	}
 
 	resp, err := analysisClient.Analyze(ctx, req)

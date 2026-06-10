@@ -221,6 +221,8 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	alters := []string{
 		`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`,
 		`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`,
+		`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS monthly_analysis_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS monthly_analysis_limit INTEGER NOT NULL DEFAULT 1000`,
 	}
 	for _, a := range alters {
 		if _, err := db.ExecContext(ctx, a); err != nil {
