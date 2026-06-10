@@ -101,8 +101,8 @@ type pipeline struct {
 	weaviateClient weaviate.WeaviateClient
 
 	// Optional capabilities
-	frameExtractor      FrameExtractor // YouTube frame extraction (nil = disabled)
-	extractFramesEnabled bool          // EXTRACT_FRAMES_ENABLED env gate
+	frameExtractor       FrameExtractor // YouTube frame extraction (nil = disabled)
+	extractFramesEnabled bool           // EXTRACT_FRAMES_ENABLED env gate
 
 	// Integration hooks (fire-and-forget, non-blocking)
 	auditHook      AuditHook
@@ -425,11 +425,11 @@ func (p *pipeline) executeFrameExtraction(
 
 	// Analyze each frame individually through the full pipeline
 	var (
-		worstDecision  v1.Decision
-		worstCategory  string
-		highestConf    float64
-		anyFrameHit    bool
-		aggregateHash  string
+		worstDecision v1.Decision
+		worstCategory string
+		highestConf   float64
+		anyFrameHit   bool
+		aggregateHash string
 	)
 
 	for i, frame := range frames {

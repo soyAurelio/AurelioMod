@@ -101,3 +101,55 @@ func (tm *TokenManager) PublicKeyHex() string {
 func (tm *TokenManager) SecretKeyHex() string {
 	return tm.secretKey.ExportHex()
 }
+
+// RotatableTokenManager supports key rotation by accepting tokens
+// signed with either the current or a previous PASETO key.
+// New tokens are always signed with the current key.
+type RotatableTokenManager struct {
+	current  *TokenManager
+	previous *TokenManager // may be nil
+}
+
+// NewRotatable creates a RotatableTokenManager from current and optional previous keys.
+// currentHex is required. previousHex may be empty (no previous key).
+func NewRotatable(currentHex, previousHex string) (*RotatableTokenManager, error) {
+	current, err := NewFromHex(currentHex)
+	if err != nil {
+		return nil, fmt.Errorf("rotatable: current key: %w", err)
+	}
+
+	rtm := &RotatableTokenManager{current: current}
+	if previousHex != "" {
+		prev, err := NewFromHex(previousHex)
+		if err != nil {
+			return nil, fmt.Errorf("rotatable: previous key: %w", err)
+		}
+		rtm.previous = prev
+	}
+	return rtm, nil
+}
+
+// ServiceToken generates a token signed with the CURRENT key.
+func (rtm *RotatableTokenManager) ServiceToken(serviceName string, ttl time.Duration) (string, error) {
+	return rtm.current.ServiceToken(serviceName, ttl)
+}
+
+// VerifyToken verifies a token against BOTH current and previous keys.
+// Returns the parsed token and nil error if either key validates.
+func (rtm *RotatableTokenManager) VerifyToken(signed string) (*pasetolib.Token, error) {
+	token, err := rtm.current.VerifyToken(signed)
+	if err == nil {
+		return token, nil
+	}
+	if rtm.previous != nil {
+		if token, prevErr := rtm.previous.VerifyToken(signed); prevErr == nil {
+			return token, nil
+		}
+	}
+	return nil, err // return the current-key error
+}
+
+// PublicKeyHex returns the current public key hex.
+func (rtm *RotatableTokenManager) PublicKeyHex() string {
+	return rtm.current.PublicKeyHex()
+}
