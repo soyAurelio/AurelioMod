@@ -108,3 +108,48 @@ func TestPublicKeyExport(t *testing.T) {
 		t.Errorf("PublicKeyHex length = %d, want 64", len(hex))
 	}
 }
+
+func TestRotatableTokenManager_BothKeys(t *testing.T) {
+	rtm, err := NewRotatable(
+		"e92551efe76b4095d38398292e040d3825b15b9bea263edaee702c6cdf9195d9",
+		"f92551efe76b4095d38398292e040d3825b15b9bea263edaee702c6cdf9195d9",
+	)
+	if err != nil {
+		t.Fatalf("NewRotatable: %v", err)
+	}
+
+	token, err := rtm.ServiceToken("test", time.Minute)
+	if err != nil {
+		t.Fatalf("ServiceToken: %v", err)
+	}
+
+	parsed, err := rtm.VerifyToken(token)
+	if err != nil {
+		t.Fatalf("VerifyToken with current key: %v", err)
+	}
+	sub, _ := parsed.GetSubject()
+	if sub != "test" {
+		t.Errorf("subject = %q, want 'test'", sub)
+	}
+}
+
+func TestRotatableTokenManager_NoPrevious(t *testing.T) {
+	rtm, err := NewRotatable(
+		"e92551efe76b4095d38398292e040d3825b15b9bea263edaee702c6cdf9195d9",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("NewRotatable: %v", err)
+	}
+
+	// previous must be nil
+	if rtm.previous != nil {
+		t.Error("expected previous to be nil when not provided")
+	}
+
+	token, _ := rtm.ServiceToken("test", time.Minute)
+	_, err = rtm.VerifyToken(token)
+	if err != nil {
+		t.Fatalf("VerifyToken: %v", err)
+	}
+}
