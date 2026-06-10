@@ -200,48 +200,54 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 	var rawBytes []byte
 	contentType := aureliomodv1.ContentType_CONTENT_TYPE_EXTERNAL_URL
 
-	// Check for attachment binary download first (regular + embed images)
-	var urlsToTry []string
-	for _, att := range event.Message.Attachments {
-		urlsToTry = append(urlsToTry, att.URL)
-	}
-	for _, embed := range event.Message.Embeds {
-		if embed.Image != nil {
-			urlsToTry = append(urlsToTry, embed.Image.URL)
+	// Gate: ATTACHMENT_ANALYSIS_ENABLED controls whether the bot downloads
+	// binary attachments from Discord CDN. When disabled (default: false),
+	// only message text URLs are processed. Enables staging/testing without
+	// consuming WaveSpeed credits for image analysis.
+	if os.Getenv("ATTACHMENT_ANALYSIS_ENABLED") == "true" {
+		// Check for attachment binary download first (regular + embed images)
+		var urlsToTry []string
+		for _, att := range event.Message.Attachments {
+			urlsToTry = append(urlsToTry, att.URL)
 		}
-	}
-	for _, url := range urlsToTry {
-		logger.InfoContext(ctx, "checking attachment for download",
-			slog.String("event", "checking_attachment"),
-			slog.String("url", url),
-			slog.Bool("is_cdn", listener.IsDiscordCDN(url)),
-		)
+		for _, embed := range event.Message.Embeds {
+			if embed.Image != nil {
+				urlsToTry = append(urlsToTry, embed.Image.URL)
+			}
+		}
+		for _, url := range urlsToTry {
+			logger.InfoContext(ctx, "checking attachment for download",
+				slog.String("event", "checking_attachment"),
+				slog.String("url", url),
+				slog.Bool("is_cdn", listener.IsDiscordCDN(url)),
+			)
 
-		if listener.IsDiscordCDN(url) {
-			downloaded, ct, err := listener.DownloadAttachment(ctx, url, listener.MaxAttachmentBytes)
-			if err != nil {
-				logger.WarnContext(ctx, "attachment download failed, falling back to text",
-					slog.String("event", "attachment_download_failed"),
-					slog.String("error", err.Error()),
+			if listener.IsDiscordCDN(url) {
+				downloaded, ct, err := listener.DownloadAttachment(ctx, url, listener.MaxAttachmentBytes)
+				if err != nil {
+					logger.WarnContext(ctx, "attachment download failed, falling back to text",
+						slog.String("event", "attachment_download_failed"),
+						slog.String("error", err.Error()),
+						slog.String("url", url),
+					)
+					continue
+				}
+				rawBytes = downloaded
+				logger.InfoContext(ctx, "attachment downloaded",
+					slog.String("event", "attachment_downloaded"),
+					slog.Int("bytes", len(downloaded)),
 					slog.String("url", url),
 				)
-				continue
-			}
-			rawBytes = downloaded
-			logger.InfoContext(ctx, "attachment downloaded",
-				slog.String("event", "attachment_downloaded"),
-				slog.Int("bytes", len(downloaded)),
-				slog.String("url", url),
-			)
-			// Determine content type from the first attachment's MIME
-			for _, att := range event.Message.Attachments {
-				if att.URL == url && att.ContentType != nil {
-					contentType = attContentType(*att.ContentType)
-					break
+				// Determine content type from the first attachment's MIME
+				for _, att := range event.Message.Attachments {
+					if att.URL == url && att.ContentType != nil {
+						contentType = attContentType(*att.ContentType)
+						break
+					}
 				}
+				_ = ct
+				break // only download first valid attachment
 			}
-			_ = ct
-			break // only download first valid attachment
 		}
 	}
 
