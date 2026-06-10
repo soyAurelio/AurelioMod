@@ -182,6 +182,53 @@ func (h *WorkspaceHandler) HandleStats(c fiber.Ctx) error {
 	})
 }
 
+// HandleConsume checks if a workspace has remaining analysis quota and
+// atomically decrements the counter. Called by Edge services before each
+// Engine analysis to enforce plan limits.
+//
+//	POST /v1/workspaces/:id/consume
+//	200: {"allowed": true, "remaining": 999}
+//	429: {"allowed": false, "remaining": 0, "retry_after": "..."}
+func (h *WorkspaceHandler) HandleConsume(c fiber.Ctx) error {
+	id := c.Params("id")
+
+	// Atomic: decrement only if count < limit, then return new values
+	var count, limit int
+	err := h.db.QueryRowContext(c.Context(), `
+		UPDATE workspaces
+		SET monthly_analysis_count = monthly_analysis_count + 1,
+		    updated_at = NOW()
+		WHERE id = $1 AND monthly_analysis_count < monthly_analysis_limit
+		RETURNING monthly_analysis_count, monthly_analysis_limit
+	`, id).Scan(&count, &limit)
+	if err == sql.ErrNoRows {
+		// Either workspace not found or limit reached
+		var exists bool
+		h.db.QueryRowContext(c.Context(), "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1)", id).Scan(&exists)
+		if !exists {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "workspace not found"})
+		}
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"allowed":    false,
+			"remaining":  0,
+			"retry_after": "next billing cycle",
+		})
+	}
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "consume failed"})
+	}
+
+	remaining := limit - count
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"allowed":   true,
+		"remaining": remaining,
+	})
+}
+
 // generateAPIKey creates a cryptographically random hex string.
 func generateAPIKey(bytes int) string {
 	buf := make([]byte, bytes)

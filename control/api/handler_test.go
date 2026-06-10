@@ -201,3 +201,12 @@ func TestRoutes_Exist(t *testing.T) {
 		})
 	}
 }
+
+func TestConsumeRoute_Exists(t *testing.T) {
+	app := New(nil, &mockTokenManager{})
+	resp := doRequest(t, app, "POST", "/v1/workspaces/123/consume", "valid-token", nil)
+	// nil DB → 500, but route must exist (not 404)
+	if resp.StatusCode == http.StatusNotFound {
+		t.Error("consume route not registered (got 404)")
+	}
+}

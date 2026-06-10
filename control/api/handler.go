@@ -53,6 +53,7 @@ func New(db *sql.DB, tm TokenManager) *fiber.App {
 	v1.Post("/workspaces", AuthMiddleware(tm), workspaces.HandleCreate)
 	v1.Get("/workspaces/:id", AuthMiddleware(tm), workspaces.HandleGet)
 	v1.Get("/workspaces/:id/stats", AuthMiddleware(tm), workspaces.HandleStats)
+	v1.Post("/workspaces/:id/consume", AuthMiddleware(tm), workspaces.HandleConsume)
 
 	// Decisions (auth required)
 	v1.Get("/workspaces/:id/decisions", AuthMiddleware(tm), decisions.HandleListDecisions)
