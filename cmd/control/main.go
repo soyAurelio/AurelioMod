@@ -19,6 +19,7 @@ import (
 	"time"
 
 	pasetolib "aidanwoods.dev/go-paseto"
+	"github.com/gofiber/fiber/v3"
 	_ "github.com/lib/pq"
 
 	controlapi "github.com/soyAurelio/AurelioMod/control/api"
@@ -121,6 +122,14 @@ func main() {
 		// Stripe webhook (no auth — Stripe signs requests)
 		app.Post("/v1/webhooks/stripe", bh.HandleWebhook)
 
+		// Redirect pages (after checkout)
+		app.Get("/billing/success", func(c fiber.Ctx) error {
+			return c.Status(200).JSON(fiber.Map{"status": "ok", "message": "payment successful", "session_id": c.Query("session_id")})
+		})
+		app.Get("/billing/cancel", func(c fiber.Ctx) error {
+			return c.Status(200).JSON(fiber.Map{"status": "cancelled", "message": "payment cancelled"})
+		})
+
 		logger.Info("stripe billing enabled")
 	} else {
 		logger.Warn("STRIPE_SECRET_KEY not set — billing disabled")
@@ -205,6 +214,17 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	for _, idx := range indexes {
 		if _, err := db.ExecContext(ctx, idx); err != nil {
 			return err
+		}
+	}
+
+	// Alter table migrations (idempotent — ignore errors if column exists)
+	alters := []string{
+		`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`,
+		`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`,
+	}
+	for _, a := range alters {
+		if _, err := db.ExecContext(ctx, a); err != nil {
+			slog.Warn("alter table migration failed (may already exist)", "error", err)
 		}
 	}
 
