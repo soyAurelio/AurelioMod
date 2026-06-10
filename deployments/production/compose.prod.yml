@@ -1,0 +1,76 @@
+# AurelioMod — Producción (Fase 1: single VPS)
+# Extiende compose.yml con hardening de seguridad.
+#
+# Uso:
+#   docker compose -f compose.yml -f deployments/production/compose.prod.yml up -d
+#
+# Requisitos previos:
+#   - Caddy como reverse proxy (ver Caddyfile)
+#   - .env con todas las variables de producción
+
+services:
+  # === Reverse Proxy (SSL + rate limiting) ===
+  caddy:
+    image: caddy:2.9-alpine
+    container_name: aureliomod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deployments/production/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - default
+
+  # === Service overrides (block public ports + resource limits) ===
+  engine:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "3.0", memory: 2g }
+        reservations: { cpus: "1.0", memory: 512m }
+
+  control:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+
+  edge-discord:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+
+  krakend:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128m }
+
+  dragonfly:
+    ports: []
+  nats:
+    ports: []
+  weaviate:
+    ports: []
+  minio:
+    ports: []
+  victoriametrics:
+    ports: []
+  tempo:
+    ports: []
+  grafana:
+    ports: []
+
+volumes:
+  caddy_data:
+  caddy_config:

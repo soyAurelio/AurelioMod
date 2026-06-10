@@ -1,0 +1,32 @@
+# AurelioMod — Reverse Proxy (Caddy)
+# Auto SSL via Let's Encrypt, HTTP→HTTPS redirect, rate limiting.
+# Caddy handles TLS termination; backend services run on localhost.
+
+{
+    email aurelio@aureliomod.com
+    admin off
+}
+
+api.aureliomod.com {
+    # Rate limiting: 200 req/s burst 50
+    rate_limit {remote} 200r/s 50
+
+    # Proxy to KrakenD API Gateway
+    reverse_proxy localhost:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    header {
+        Strict-Transport-Security "max-age=63072000"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+    }
+}
+
+# Health check endpoint (no rate limit)
+api.aureliomod.com/healthz {
+    reverse_proxy localhost:8080
+}

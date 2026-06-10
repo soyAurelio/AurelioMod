@@ -52,3 +52,21 @@ pipeline:
       - sbom
     commands:
       - CGO_ENABLED=0 go build ./cmd/engine
+
+  # Stage 6: Deploy to production (main branch only)
+  deploy:
+    image: docker:cli
+    group: deploy
+    depends_on:
+      - build
+    when:
+      branch: main
+    environment:
+      DOCKER_HOST: tcp://${PROD_VPS_IP}:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs
+    commands:
+      - docker compose -f compose.yml -f deployments/production/compose.prod.yml up -d --force-recreate
+    secrets:
+      - prod_vps_ip
+      - prod_ssh_key
