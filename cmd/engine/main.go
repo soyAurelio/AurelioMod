@@ -200,16 +200,26 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		"sandbox", sandboxEnabled,
 	)
 
-	// Web Risk URL reputation service
+	// Web Risk URL reputation service (best-effort).
+	// When WEBRISK_ENABLED=true but no credentials are available (ADC missing
+	// or WEBRISK_API_KEY unset), the service starts disabled with a warning
+	// instead of failing startup. This enables development/testing without
+	// Google Cloud credentials.
 	wrEnabled := os.Getenv("WEBRISK_ENABLED") != "false" // default: true
 	wrService, err := safety.NewWebRiskService(ctx, safety.WebRiskConfig{
-		RDB:     cacheClient.RDB(), // Access the underlying go-redis client for SETEX caching
+		RDB:     cacheClient.RDB(),
 		Enabled: wrEnabled,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("webrisk init: %w", err)
-	}
-	if wrEnabled {
+		slog.WarnContext(ctx, "webrisk init failed — URL safety checks disabled",
+			"error", err,
+		)
+		// Create a disabled service so the server can still start
+		wrService, _ = safety.NewWebRiskService(ctx, safety.WebRiskConfig{
+			RDB:     nil,
+			Enabled: false,
+		})
+	} else if wrEnabled {
 		slog.InfoContext(ctx, "Web Risk service created", "cache_ttl", "15m")
 	} else {
 		slog.WarnContext(ctx, "WEBRISK_ENABLED=false — URL safety checks disabled")
