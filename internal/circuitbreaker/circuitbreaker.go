@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/failsafe-go/failsafe-go"
@@ -16,13 +17,31 @@ import (
 	"github.com/failsafe-go/failsafe-go/timeout"
 )
 
+// waveSpeedPlanConcurrency maps WaveSpeed account tiers to their
+// concurrent task limits (source: https://wavespeed.ai/docs/account-levels).
+//
+// Tiers are unlocked by cumulative top-up:
+//   bronze — free, default for new accounts
+//   silver — $100 total top-up
+//   gold   — $1,000 total top-up
+//   ultra  — $10,000 total top-up
+var waveSpeedPlanConcurrency = map[string]int{
+	"free":   3,    // same as bronze (conservative)
+	"bronze": 3,
+	"silver": 100,
+	"gold":   2000,
+	"ultra":  5000,
+}
+
 // WaveSpeedExecutor returns a failsafe Executor pre-configured for WaveSpeed API calls.
 //
-// Env gate: WAVESPEED_MAX_CONCURRENT controls the Bulkhead permit count (default 1).
-// A value of 0 disables the Bulkhead entirely.
+// Concurrency is resolved dynamically via resolveMaxConcurrent():
+//   1. WAVESPEED_MAX_CONCURRENT=N → explicit override (0 = disable Bulkhead)
+//   2. WAVESPEED_PLAN=tier        → look up in waveSpeedPlanConcurrency map
+//   3. Default                     → 3 (bronze tier — default for new accounts)
 //
 // Policies (applied outermost → innermost):
-//   - Bulkhead(1): serializes all WaveSpeed calls, rejects immediately when busy
+//   - Bulkhead(N): gates concurrent WaveSpeed calls, rejects immediately when full
 //   - Retry: 3 attempts, backoff 100ms → 200ms → 400ms
 //   - Circuit Breaker: 5 failures → open 30s
 //   - Timeout: 10s per attempt
@@ -47,9 +66,10 @@ func WaveSpeedExecutor[R any]() failsafe.Executor[R] {
 
 	policies := []failsafe.Policy[R]{retry, cb, timeoutPolicy, fb}
 
-	// Bulkhead(1) serializes WaveSpeed calls to prevent overload storms.
-	// Gate: WAVESPEED_MAX_CONCURRENT=0 disables the bulkhead entirely.
-	if mc := parseMaxConcurrent(); mc > 0 {
+	// Bulkhead gates concurrent WaveSpeed calls.
+	// resolveMaxConcurrent() → plan-based tier limit with explicit env override.
+	// A value of 0 disables the Bulkhead entirely.
+	if mc := resolveMaxConcurrent(); mc > 0 {
 		bh := bulkhead.NewBuilder[R](uint(mc)).
 			WithMaxWaitTime(0). // reject immediately when full, don't queue
 			Build()
@@ -60,18 +80,31 @@ func WaveSpeedExecutor[R any]() failsafe.Executor[R] {
 	return failsafe.With[R](policies...)
 }
 
-// parseMaxConcurrent reads WAVESPEED_MAX_CONCURRENT from env.
-// Returns 1 if unset or unparseable (safe default: serial execution).
-func parseMaxConcurrent() int {
-	v := os.Getenv("WAVESPEED_MAX_CONCURRENT")
-	if v == "" {
-		return 1
+// resolveMaxConcurrent determines the Bulkhead concurrency limit.
+// Resolution order:
+//   1. WAVESPEED_MAX_CONCURRENT=N → explicit number (0 = disable Bulkhead)
+//   2. WAVESPEED_PLAN=tier        → preset from waveSpeedPlanConcurrency
+//   3. Default                     → 3 (bronze tier — default for new accounts)
+//
+// This allows changing the limit without code changes: switch plan tiers
+// as you top up, or override with an exact number.
+func resolveMaxConcurrent() int {
+	// 1. Explicit numeric override (highest priority)
+	if v := os.Getenv("WAVESPEED_MAX_CONCURRENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		return 1 // invalid or negative → default
+
+	// 2. Plan-based tier (WAVESPEED_PLAN=bronze|silver|gold|ultra)
+	if plan := strings.ToLower(os.Getenv("WAVESPEED_PLAN")); plan != "" {
+		if n, ok := waveSpeedPlanConcurrency[plan]; ok {
+			return n
+		}
 	}
-	return n
+
+	// 3. Default: bronze tier (free for new accounts, 3 concurrent tasks)
+	return 3
 }
 
 // Execute runs fn through the executor with the given context.
