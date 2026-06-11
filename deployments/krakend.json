@@ -33,6 +33,14 @@
       "input_headers": [
         "Content-Type"
       ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 10,
+          "client_max_rate": 5,
+          "strategy": "ip",
+          "every": "1m"
+        }
+      },
       "backend": [
         {
           "host": [
@@ -87,6 +95,13 @@
         "Authorization",
         "Content-Type"
       ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 20,
+          "client_max_rate": 5,
+          "strategy": "ip"
+        }
+      },
       "backend": [
         {
           "host": [
@@ -235,6 +250,13 @@
         "Authorization",
         "Content-Type"
       ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 200,
+          "client_max_rate": 50,
+          "strategy": "ip"
+        }
+      },
       "backend": [
         {
           "host": [

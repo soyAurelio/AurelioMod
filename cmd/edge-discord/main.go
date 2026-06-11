@@ -72,11 +72,13 @@ func main() {
 	analysisClient := client.NewClient(engineURL, logger)
 
 	// PlanClient: Control API quota check before Engine analysis.
-	// Fails open — if Control API is unreachable, analysis proceeds.
-	planClient := edgecontrol.NewPlanClient(
-		os.Getenv("CONTROL_URL"),
-		os.Getenv("CONTROL_TOKEN"),
-	)
+	// Fails closed — if Control API is unconfigured or unreachable, analysis is denied.
+	controlURL := os.Getenv("CONTROL_URL")
+	controlToken := os.Getenv("CONTROL_TOKEN")
+	if controlURL == "" || controlToken == "" {
+		logger.Warn("CONTROL_URL and CONTROL_TOKEN not set — quota checks disabled, all analysis will be denied")
+	}
+	planClient := edgecontrol.NewPlanClient(controlURL, controlToken)
 
 	// Rate limiter: 45 req/s token bucket with 2s queue deadline.
 	limiter := ratelimit.NewLimiter(logger)

@@ -12,6 +12,7 @@ linters:
     - errcheck       # unchecked errors
     - gosec          # security checks
     - goimports      # import formatting + grouping
+    - gofumpt        # stricter gofmt (stack requirement)
     - ineffassign    # ineffective assignments
     - misspell       # spelling in comments
 

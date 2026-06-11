@@ -37,10 +37,12 @@ func NewPlanClient(baseURL, token string) *PlanClient {
 
 // Consume checks and decrements the workspace monthly analysis quota.
 // Returns true if allowed, false if quota exhausted.
-// Fails open on network errors to avoid blocking legitimate analysis.
+// Fails closed: if the Control API is unreachable or unconfigured, analysis
+// is denied rather than allowing unbilled consumption.
 func (c *PlanClient) Consume(ctx context.Context, workspaceID string) bool {
 	if c.baseURL == "" || c.token == "" {
-		return true
+		slog.WarnContext(ctx, "control: PLAN_CLIENT not configured — denying analysis (fail-closed)")
+		return false
 	}
 
 	url := fmt.Sprintf("%s/v1/workspaces/%s/consume", c.baseURL, workspaceID)

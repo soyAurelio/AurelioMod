@@ -127,11 +127,15 @@ func initNoop() (*Telemetry, error) {
 
 // initTracerProvider creates an OTLP gRPC trace exporter and configures
 // the global tracer provider with batch export.
+// Uses TLS by default; set OTEL_INSECURE=true for dev/no-TLS environments.
 func initTracerProvider(ctx context.Context, endpoint string, res *resource.Resource) (*sdktrace.TracerProvider, error) {
-	exporter, err := otlptracegrpc.New(ctx,
+	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
+	}
+	if os.Getenv("OTEL_INSECURE") == "true" {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("otlp trace exporter: %w", err)
 	}
@@ -150,11 +154,15 @@ func initTracerProvider(ctx context.Context, endpoint string, res *resource.Reso
 
 // initMeterProvider creates an OTLP gRPC metric exporter and configures
 // the global meter provider with periodic export to VictoriaMetrics.
+// Uses TLS by default; set OTEL_INSECURE=true for dev/no-TLS environments.
 func initMeterProvider(ctx context.Context, endpoint string, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
-	exporter, err := otlpmetricgrpc.New(ctx,
+	opts := []otlpmetricgrpc.Option{
 		otlpmetricgrpc.WithEndpoint(endpoint),
-		otlpmetricgrpc.WithInsecure(),
-	)
+	}
+	if os.Getenv("OTEL_INSECURE") == "true" {
+		opts = append(opts, otlpmetricgrpc.WithInsecure())
+	}
+	exporter, err := otlpmetricgrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("otlp metric exporter: %w", err)
 	}
