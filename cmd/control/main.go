@@ -24,6 +24,7 @@ import (
 
 	controlapi "github.com/soyAurelio/AurelioMod/control/api"
 	"github.com/soyAurelio/AurelioMod/control/billing"
+	"github.com/soyAurelio/AurelioMod/internal/env"
 	"github.com/soyAurelio/AurelioMod/internal/paseto"
 )
 
@@ -58,7 +59,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	// --- Configuration ---
-	port := envOrDefault("PORT", "8080")
+	port := env.Get("PORT", "8080")
 	dbURL := os.Getenv("NEON_DATABASE_URL")
 	if dbURL == "" {
 		logger.Error("NEON_DATABASE_URL is required")
@@ -160,13 +161,6 @@ func main() {
 	logger.Info("control api stopped")
 }
 
-// envOrDefault returns the env var value or fallback if unset.
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 // migrate applies pending database migrations.
 func migrate(ctx context.Context, db *sql.DB) error {

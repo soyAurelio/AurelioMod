@@ -229,34 +229,6 @@
       ]
     },
     {
-      "endpoint": "/api/engine/analyze",
-      "method": "POST",
-      "input_headers": [
-        "Content-Type"
-      ],
-      "extra_config": {
-        "qos/ratelimit/router": {
-          "max_rate": 200,
-          "client_max_rate": 45,
-          "strategy": "ip"
-        },
-        "qos/circuit-breaker": {
-          "interval": 60,
-          "timeout": 30,
-          "max_errors": 5,
-          "name": "engine-cb"
-        }
-      },
-      "backend": [
-        {
-          "host": [
-            "http://engine:8080"
-          ],
-          "url_pattern": "/aureliomod.v1.ContentAnalysisService/Analyze"
-        }
-      ]
-    },
-    {
       "endpoint": "/v1/workspaces/{id}/consume",
       "method": "POST",
       "input_headers": [

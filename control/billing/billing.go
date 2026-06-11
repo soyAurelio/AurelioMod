@@ -198,17 +198,28 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch event.Type {
-	case "checkout.session.completed":
-		h.handleCheckoutCompleted(r.Context(), event)
-	case "customer.subscription.updated":
-		h.handleSubscriptionUpdated(r.Context(), event)
-	case "customer.subscription.deleted":
-		h.handleSubscriptionDeleted(r.Context(), event)
+	case "checkout.session.completed", "customer.subscription.updated", "customer.subscription.deleted":
+		// Process async — Stripe expects 200 ASAP, DB writes happen in background
+		go h.dispatchEvent(event)
 	default:
 		slog.Debug("stripe unhandled event type", "type", event.Type)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"received": true})
+}
+
+// dispatchEvent routes a Stripe event to the appropriate handler.
+// Runs in a goroutine so the webhook returns immediately to Stripe.
+func (h *Handler) dispatchEvent(event stripe.Event) {
+	ctx := context.Background()
+	switch event.Type {
+	case "checkout.session.completed":
+		h.handleCheckoutCompleted(ctx, event)
+	case "customer.subscription.updated":
+		h.handleSubscriptionUpdated(ctx, event)
+	case "customer.subscription.deleted":
+		h.handleSubscriptionDeleted(ctx, event)
+	}
 }
 
 // handleCheckoutCompleted processes a checkout.session.completed event.
