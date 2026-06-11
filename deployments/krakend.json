@@ -12,6 +12,19 @@
       "level": "ERROR",
       "stdout": true,
       "format": "json"
+    },
+    "auth/validator": {
+      "validator": {
+        "endpoint": "/v1/auth/verify",
+        "host": [
+          "http://control:8080"
+        ],
+        "headers_to_pass": [
+          "Authorization"
+        ],
+        "cache": true,
+        "cache_duration": 300
+      }
     }
   },
   "endpoints": [
@@ -64,7 +77,10 @@
           ],
           "url_pattern": "/v1/auth/refresh"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/workspaces",
@@ -77,7 +93,8 @@
           "max_rate": 100,
           "client_max_rate": 20,
           "strategy": "ip"
-        }
+        },
+        "auth/validator": true
       },
       "backend": [
         {
@@ -100,7 +117,8 @@
           "max_rate": 20,
           "client_max_rate": 5,
           "strategy": "ip"
-        }
+        },
+        "auth/validator": true
       },
       "backend": [
         {
@@ -124,7 +142,10 @@
           ],
           "url_pattern": "/v1/workspaces/{id}"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/workspaces/{id}/stats",
@@ -139,7 +160,10 @@
           ],
           "url_pattern": "/v1/workspaces/{id}/stats"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/workspaces/{id}/decisions",
@@ -154,7 +178,10 @@
           ],
           "url_pattern": "/v1/workspaces/{id}/decisions"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/workspaces/{id}/decisions/{audit_id}",
@@ -169,7 +196,10 @@
           ],
           "url_pattern": "/v1/workspaces/{id}/decisions/{audit_id}"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/billing/checkout",
@@ -185,7 +215,10 @@
           ],
           "url_pattern": "/v1/billing/checkout"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/billing/portal",
@@ -201,7 +234,10 @@
           ],
           "url_pattern": "/v1/billing/portal"
         }
-      ]
+      ],
+      "extra_config": {
+        "auth/validator": true
+      }
     },
     {
       "endpoint": "/v1/webhooks/stripe",
@@ -255,7 +291,8 @@
           "max_rate": 200,
           "client_max_rate": 50,
           "strategy": "ip"
-        }
+        },
+        "auth/validator": true
       },
       "backend": [
         {

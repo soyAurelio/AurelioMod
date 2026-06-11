@@ -98,7 +98,26 @@ func (h *AuthHandler) HandleLogin(c fiber.Ctx) error {
 	})
 }
 
-// HandleRefresh validates an existing PASETO token and issues a new one.
+// HandleVerify validates a PASETO token without requiring api_key.
+// Used by KrakenD auth/validator as an external identity provider.
+// KrakenD calls this endpoint on every request to validate the bearer token.
+//
+//	GET /v1/auth/verify
+//	Header: Authorization: Bearer <token>
+//	200:  {"workspace_id": "ws_...", "valid": true}
+//	401:  {"error": "invalid token"}
+func (h *AuthHandler) HandleVerify(c fiber.Ctx) error {
+	workspaceID, ok := c.Locals("workspace_id").(string)
+	if !ok || workspaceID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid token",
+		})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"workspace_id": workspaceID,
+		"valid":        true,
+	})
+}
 //
 //	POST /v1/auth/refresh
 //	Header: Authorization: Bearer <token>

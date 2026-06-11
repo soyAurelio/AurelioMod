@@ -44,8 +44,9 @@ func New(db *sql.DB, tm TokenManager) *fiber.App {
 	// --- v1 API ---
 	v1 := app.Group("/v1")
 
-	// Auth (no middleware)
+	// Auth (public, no middleware for login and verify)
 	v1.Post("/auth/login", auth.HandleLogin)
+	v1.Get("/auth/verify", AuthMiddleware(tm), auth.HandleVerify)
 	v1.Post("/auth/refresh", AuthMiddleware(tm), auth.HandleRefresh)
 
 	// Workspaces (auth required)

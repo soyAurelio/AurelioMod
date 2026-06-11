@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -132,4 +133,27 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// PresignedURL generates a time-limited download URL for an audit event.
+// Used for GDPR data export, appeals evidence, and NIS2 compliance audits.
+// The URL is valid for the specified duration (max 7 days per S3 limits).
+// Returns an empty string if the store is nil or the client is unavailable.
+func (s *S3AuditStore) PresignedURL(ctx context.Context, event AuditEvent, ttl time.Duration) (string, error) {
+	if s == nil || s.client == nil {
+		return "", fmt.Errorf("s3 audit: store not initialized")
+	}
+
+	key := objectKey(event)
+	presignClient := s3.NewPresignClient(s.client)
+
+	req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("s3 audit: presign url for %s: %w", key, err)
+	}
+
+	return req.URL, nil
 }

@@ -30,15 +30,8 @@ services:
     networks:
       - default
 
-  # === Service overrides (block public ports + resource limits) ===
+  # === Production overrides for infrastructure services ===
   ytdlp-sidecar:
-    ports: []
-    deploy:
-      resources:
-        limits: { cpus: "1.0", memory: 512m }
-        reservations: { cpus: "0.25", memory: 128m }
-    restart: unless-stopped
-  engine:
     ports: []
     deploy:
       resources:
@@ -97,6 +90,8 @@ services:
       resources:
         limits: { cpus: "1.0", memory: 1g }
   centrifugo:
+    volumes:
+      - ./deployments/centrifugo.prod.json:/centrifugo/config.json:ro
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 256m }
