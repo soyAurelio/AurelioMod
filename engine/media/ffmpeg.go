@@ -56,7 +56,7 @@ func (n *NsJailFFmpeg) Run(ctx context.Context, args []string, stdin []byte) ([]
 	var cmd *exec.Cmd
 
 	if n.enabled {
-		nsjailArgs := buildNsJailArgs(n.nsjailPath, n.ffmpegBinary, args)
+		nsjailArgs := buildNsJailArgs(n.ffmpegBinary, args)
 		cmd = exec.CommandContext(ctx, n.nsjailPath, nsjailArgs...)
 	} else {
 		cmd = exec.CommandContext(ctx, n.ffmpegBinary, args...)
@@ -142,10 +142,7 @@ func (n *NsJailFFmpeg) ExtractCollage(ctx context.Context, inputPath string) ([]
 // buildNsJailArgs constructs the nsjail command-line arguments for
 // sandboxed FFmpeg execution inside a Docker container.
 // Docker already provides namespace isolation; nsjail handles process limits/rlimits.
-func buildNsJailArgs(nsjailPath, ffmpegBinary string, ffmpegArgs []string) []string {
-	_ = nsjailPath
-
-	base := []string{
+func buildNsJailArgs(ffmpegBinary string, ffmpegArgs []string) []string {	base := []string{
 		"--disable_clone_newuser", "--disable_clone_newpid",
 		"--disable_clone_newns", "--disable_clone_newipc",
 		"--disable_clone_newuts", "--disable_clone_newcgroup",

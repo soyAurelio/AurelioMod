@@ -26,7 +26,7 @@ func TestNormalizer_InjectedRunner_CallsRun(t *testing.T) {
 		},
 	}
 
-	n := NewNormalizerWithRunner(mock, "")
+	n := NewNormalizer(mock)
 	ctx := t.Context()
 
 	result, err := n.Normalize(ctx, []byte{0xFF, 0xD8, 0xFF})
@@ -63,7 +63,7 @@ func TestNormalizer_InjectedRunner_ErrorPropagation(t *testing.T) {
 		},
 	}
 
-	n := NewNormalizerWithRunner(mock, "")
+	n := NewNormalizer(mock)
 	ctx := t.Context()
 
 	_, err := n.Normalize(ctx, []byte{0xFF, 0xD8, 0xFF})
@@ -85,7 +85,7 @@ func TestNormalizer_ContextPropagation(t *testing.T) {
 		},
 	}
 
-	n := NewNormalizerWithRunner(mock, "")
+	n := NewNormalizer(mock)
 	ctx := t.Context()
 
 	_, err := n.Normalize(ctx, []byte{0xFF, 0xD8, 0xFF})
@@ -151,7 +151,7 @@ func TestNormalizer_JPEGAntiPolyglot(t *testing.T) {
 		},
 	}
 
-	n := NewNormalizerWithRunner(mock, "")
+	n := NewNormalizer(mock)
 	ctx := t.Context()
 
 	result, err := n.Normalize(ctx, polyglot)
@@ -236,7 +236,7 @@ func TestNormalizer_CleanJPEG_NoPolyglot(t *testing.T) {
 		},
 	}
 
-	n := NewNormalizerWithRunner(mock, "")
+	n := NewNormalizer(mock)
 	ctx := t.Context()
 
 	result, err := n.Normalize(ctx, cleanJPEG)

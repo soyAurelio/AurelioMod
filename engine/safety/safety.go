@@ -198,8 +198,3 @@ func (s *WebRiskService) searchUris(ctx context.Context, url string) (*webriskpb
 	}
 	return resp.GetThreat(), nil
 }
-
-// redisWebRiskKey returns the cache key for a URL lookup.
-func redisWebRiskKey(url string) string {
-	return "webrisk:" + url
-}

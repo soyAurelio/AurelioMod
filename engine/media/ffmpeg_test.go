@@ -49,7 +49,7 @@ func TestFFmpegRunner_MockError(t *testing.T) {
 func TestNsJailFFmpegBuildCmd_NetNone(t *testing.T) {
 	runner := NewNsJailFFmpeg("/usr/bin/nsjail", "/usr/bin/ffmpeg", true)
 
-	args := buildNsJailArgs(runner.nsjailPath, runner.ffmpegBinary, []string{"-i", "pipe:0"})
+	args := buildNsJailArgs(runner.ffmpegBinary, []string{"-i", "pipe:0"})
 
 	// -N (disable clone_newnet) must be present — we reuse Docker's network namespace
 	foundN := false
@@ -68,7 +68,7 @@ func TestNsJailFFmpegBuildCmd_NetNone(t *testing.T) {
 func TestNsJailFFmpegBuildCmd_TmpWritable(t *testing.T) {
 	runner := NewNsJailFFmpeg("/usr/bin/nsjail", "/usr/bin/ffmpeg", true)
 
-	args := buildNsJailArgs(runner.nsjailPath, runner.ffmpegBinary, []string{"-i", "pipe:0"})
+	args := buildNsJailArgs(runner.ffmpegBinary, []string{"-i", "pipe:0"})
 
 	// Check --cwd value is /tmp
 	foundCwd := false
@@ -117,7 +117,7 @@ func TestFFmpegRunner_MockContextPropagation(t *testing.T) {
 // TestBuildNsJailArgs_DoubleDash verifies that -- separates nsjail flags
 // from the ffmpeg binary and its arguments.
 func TestBuildNsJailArgs_DoubleDash(t *testing.T) {
-	args := buildNsJailArgs("/usr/bin/nsjail", "/usr/bin/ffmpeg", []string{"-i", "pipe:0", "-f", "null"})
+	args := buildNsJailArgs("/usr/bin/ffmpeg", []string{"-i", "pipe:0", "-f", "null"})
 
 	// Verify -- separator exists
 	var ffmpegArgs []string

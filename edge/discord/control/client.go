@@ -49,7 +49,7 @@ func (c *PlanClient) Consume(ctx context.Context, workspaceID string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		slog.WarnContext(ctx, "control: consume request failed", "error", err)
-		return true
+		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
@@ -57,7 +57,7 @@ func (c *PlanClient) Consume(ctx context.Context, workspaceID string) bool {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		slog.WarnContext(ctx, "control: consume unavailable", "error", err)
-		return true
+		return false
 	}
 	defer resp.Body.Close()
 
@@ -66,7 +66,11 @@ func (c *PlanClient) Consume(ctx context.Context, workspaceID string) bool {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return true
+		slog.WarnContext(ctx, "control: consume denied",
+			"status", resp.StatusCode,
+			"workspace_id", workspaceID,
+		)
+		return false
 	}
 
 	var result ConsumeResponse

@@ -26,12 +26,6 @@ func NewNormalizer(runner media.FFmpegRunner) *Normalizer {
 	return &Normalizer{runner: runner}
 }
 
-// NewNormalizerWithRunner creates a Normalizer with the given FFmpegRunner
-// and an optional fallback path. The path is ignored if runner is non-nil.
-func NewNormalizerWithRunner(runner media.FFmpegRunner, _ string) *Normalizer {
-	return &Normalizer{runner: runner}
-}
-
 // Normalize runs the full normalization pipeline on raw input bytes.
 //
 // Pipeline:
