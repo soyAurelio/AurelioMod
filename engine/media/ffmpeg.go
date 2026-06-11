@@ -125,8 +125,9 @@ func (n *NsJailFFmpeg) ExtractFrames(ctx context.Context, inputPath string, time
 // This reduces WaveSpeed API calls from N frames to 1 collage.
 //
 // Single ffmpeg invocation:
-//   ffmpeg -i input -vf "select='gt(scene,0.3)',scale=320:-1,tile=3x3"
-//          -vframes 1 -q:v 3 -f image2pipe pipe:1
+//
+//	ffmpeg -i input -vf "select='gt(scene,0.3)',scale=320:-1,tile=3x3"
+//	       -vframes 1 -q:v 3 -f image2pipe pipe:1
 func (n *NsJailFFmpeg) ExtractCollage(ctx context.Context, inputPath string) ([]byte, error) {
 	args := []string{
 		"-i", inputPath,
@@ -142,7 +143,8 @@ func (n *NsJailFFmpeg) ExtractCollage(ctx context.Context, inputPath string) ([]
 // buildNsJailArgs constructs the nsjail command-line arguments for
 // sandboxed FFmpeg execution inside a Docker container.
 // Docker already provides namespace isolation; nsjail handles process limits/rlimits.
-func buildNsJailArgs(ffmpegBinary string, ffmpegArgs []string) []string {	base := []string{
+func buildNsJailArgs(ffmpegBinary string, ffmpegArgs []string) []string {
+	base := []string{
 		"--disable_clone_newuser", "--disable_clone_newpid",
 		"--disable_clone_newns", "--disable_clone_newipc",
 		"--disable_clone_newuts", "--disable_clone_newcgroup",

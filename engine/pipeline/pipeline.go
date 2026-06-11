@@ -62,6 +62,13 @@ type QuarantineHook func(ctx context.Context, contentID, decision, category stri
 // Returns the extracted PNG frame bytes.
 type FrameExtractor func(ctx context.Context, videoURL string, timestampSec, maxFrames int) ([][]byte, error)
 
+// URLChecker validates URLs for safety before content fetch.
+// Implementations call Google Web Risk API or equivalent.
+// Returns an error if the URL is malicious; nil if safe.
+type URLChecker interface {
+	CheckURL(ctx context.Context, rawURL string) error
+}
+
 // PipelineOption configures optional pipeline behavior.
 type PipelineOption func(*pipeline)
 
@@ -78,6 +85,13 @@ func WithDecisionHook(h DecisionHook) PipelineOption {
 // WithQuarantineHook sets the quarantine state update hook.
 func WithQuarantineHook(h QuarantineHook) PipelineOption {
 	return func(p *pipeline) { p.quarantineHook = h }
+}
+
+// WithURLChecker sets the URL safety checker (Web Risk API).
+// When set, all EXTERNAL_URL content is validated before content fetch.
+// Malicious URLs return DECISION_BLOCK immediately.
+func WithURLChecker(checker URLChecker) PipelineOption {
+	return func(p *pipeline) { p.urlChecker = checker }
 }
 
 // WithFrameExtractor sets the frame extraction function for YouTube URL analysis.
@@ -101,6 +115,7 @@ type pipeline struct {
 	weaviateClient weaviate.WeaviateClient
 
 	// Optional capabilities
+	urlChecker           URLChecker     // Web Risk API URL safety check
 	frameExtractor       FrameExtractor // YouTube frame extraction (nil = disabled)
 	extractFramesEnabled bool           // EXTRACT_FRAMES_ENABLED env gate
 
@@ -153,21 +168,40 @@ func New(
 func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.AnalyzeResponse, error) {
 	start := time.Now()
 
-	// External URL frame extraction path (spec R3.1, R3.5)
-	if req.ContentType == v1.ContentType_CONTENT_TYPE_EXTERNAL_URL &&
-		p.frameExtractor != nil &&
-		p.extractFramesEnabled {
+	// External URL path: check URL safety BEFORE any content fetch.
+	// Malicious URLs are blocked immediately per NIS2/DSA requirements.
+	if req.ContentType == v1.ContentType_CONTENT_TYPE_EXTERNAL_URL {
+		rawURL := string(req.RawBytes)
 
-		videoURL := string(req.RawBytes)
-		if isYouTubeURL(videoURL) {
-			ts, ok := parseTimestampParam(videoURL)
+		// Gate 1: URL reputation check (Web Risk API)
+		if p.urlChecker != nil {
+			if err := p.urlChecker.CheckURL(ctx, rawURL); err != nil {
+				slog.WarnContext(ctx, "pipeline: url blocked by safety check",
+					"url", rawURL,
+					"reason", err.Error(),
+					"workspace_id", req.WorkspaceId,
+				)
+				return &v1.AnalyzeResponse{
+					Decision:     v1.Decision_DECISION_BLOCK,
+					BlockReason:  fmt.Sprintf("url_safety:%s", err.Error()),
+					Confidence:   1.0,
+					Category:     "url_malicious",
+					CacheLevel:   v1.CacheLevel_CACHE_LEVEL_NONE,
+					ProcessingMs: time.Since(start).Milliseconds(),
+				}, nil
+			}
+		}
+
+		// Gate 2: Frame extraction path (YouTube, when enabled)
+		if p.frameExtractor != nil && p.extractFramesEnabled && isYouTubeURL(rawURL) {
+			ts, ok := parseTimestampParam(rawURL)
 			if ok {
 				slog.InfoContext(ctx, "youtube frame extraction triggered",
-					"url", videoURL,
+					"url", rawURL,
 					"timestamp_sec", ts,
 					"workspace_id", req.WorkspaceId,
 				)
-				return p.executeFrameExtraction(ctx, req, videoURL, ts, start)
+				return p.executeFrameExtraction(ctx, req, rawURL, ts, start)
 			}
 		}
 	}

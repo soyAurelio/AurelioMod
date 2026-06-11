@@ -7,14 +7,14 @@ run:
 
 linters:
   enable:
-    - govet          # Go vet reports
-    - staticcheck    # static analysis
-    - errcheck       # unchecked errors
-    - gosec          # security checks
-    - goimports      # import formatting + grouping
-    - gofumpt        # stricter gofmt (stack requirement)
-    - ineffassign    # ineffective assignments
-    - misspell       # spelling in comments
+    - govet # Go vet reports
+    - staticcheck # static analysis
+    - errcheck # unchecked errors
+    - gosec # security checks
+    - goimports # import formatting + grouping
+    - gofumpt # stricter gofmt (stack requirement)
+    - ineffassign # ineffective assignments
+    - misspell # spelling in comments
 
 linters-settings:
   govet:

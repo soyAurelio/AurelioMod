@@ -59,6 +59,14 @@ func New(db *sql.DB, tm TokenManager) *fiber.App {
 	v1.Get("/workspaces/:id/decisions", AuthMiddleware(tm), decisions.HandleListDecisions)
 	v1.Get("/workspaces/:id/decisions/:audit_id", AuthMiddleware(tm), decisions.HandleGetDecision)
 
+	// MFA (auth required)
+	mfaSvc := NewMFA(Config{Issuer: "AurelioMod", DB: db})
+	mfaHandler := NewMFAHandler(mfaSvc)
+	v1.Post("/workspaces/:id/mfa/enroll", AuthMiddleware(tm), mfaHandler.HandleBeginEnrollment)
+	v1.Post("/workspaces/:id/mfa/confirm", AuthMiddleware(tm), mfaHandler.HandleConfirmEnrollment)
+	v1.Get("/workspaces/:id/mfa/status", AuthMiddleware(tm), mfaHandler.HandleStatus)
+	v1.Delete("/workspaces/:id/mfa", AuthMiddleware(tm), mfaHandler.HandleDisable)
+
 	return app
 }
 

@@ -29,8 +29,8 @@ type ConsumeResponse struct {
 // NewPlanClient creates a PlanClient with a PASETO token for auth.
 func NewPlanClient(baseURL, token string) *PlanClient {
 	return &PlanClient{
-		baseURL: baseURL,
-		token:   token,
+		baseURL:    baseURL,
+		token:      token,
 		httpClient: &http.Client{Timeout: 3 * time.Second},
 	}
 }

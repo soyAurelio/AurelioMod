@@ -34,13 +34,13 @@ import (
 	"github.com/soyAurelio/AurelioMod/engine/media"
 	engineNats "github.com/soyAurelio/AurelioMod/engine/nats"
 	"github.com/soyAurelio/AurelioMod/engine/pipeline"
+	"github.com/soyAurelio/AurelioMod/engine/quarantine"
 	"github.com/soyAurelio/AurelioMod/engine/safety"
 	"github.com/soyAurelio/AurelioMod/engine/service"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
 	"github.com/soyAurelio/AurelioMod/internal/auth"
-	"github.com/soyAurelio/AurelioMod/engine/quarantine"
-	"github.com/soyAurelio/AurelioMod/internal/env"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
+	"github.com/soyAurelio/AurelioMod/internal/env"
 	internalnats "github.com/soyAurelio/AurelioMod/internal/nats"
 	"github.com/soyAurelio/AurelioMod/internal/paseto"
 	"github.com/soyAurelio/AurelioMod/internal/weaviate"
@@ -73,7 +73,6 @@ func loadConfig() serverConfig {
 		ServiceName:   env.Get("OTEL_SERVICE_NAME", "engine"),
 	}
 }
-
 
 // setGOMAXPROCS reserves one logical CPU for FFmpeg subprocesses.
 // It returns the value passed to runtime.GOMAXPROCS.
@@ -199,8 +198,8 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	// By default, WebRisk is best-effort: if credentials are unavailable, the
 	// service starts disabled and logs a warning. Set WEBRISK_REQUIRED=true in
 	// production to force a fatal error when URL safety cannot be initialized.
-	wrEnabled := os.Getenv("WEBRISK_ENABLED") != "false" // default: true
-	wrRequired := os.Getenv("WEBRISK_REQUIRED") == "true"  // default: false
+	wrEnabled := os.Getenv("WEBRISK_ENABLED") != "false"  // default: true
+	wrRequired := os.Getenv("WEBRISK_REQUIRED") == "true" // default: false
 	wrService, err := safety.NewWebRiskService(ctx, safety.WebRiskConfig{
 		RDB:     cacheClient.RDB(),
 		Enabled: wrEnabled,
@@ -222,7 +221,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	} else {
 		slog.WarnContext(ctx, "WEBRISK_ENABLED=false — URL safety checks disabled")
 	}
-	_ = wrService // wired for future URL-sourced content pipeline integration
+	slog.InfoContext(ctx, "webrisk wired into pipeline URL safety gate")
 
 	// WaveSpeed analyzer (optional)
 	var waveSpeed analyzer.Analyzer
@@ -357,6 +356,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		normalizer,
 		waveSpeed,
 		wvClient,
+		pipeline.WithURLChecker(wrService),
 		pipeline.WithAuditHook(auditHook),
 		pipeline.WithDecisionHook(decisionHook),
 		pipeline.WithQuarantineHook(quarantineHook),

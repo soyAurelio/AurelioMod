@@ -166,7 +166,6 @@ func main() {
 	logger.Info("control api stopped")
 }
 
-
 // migrate applies pending database migrations.
 func migrate(ctx context.Context, db *sql.DB) error {
 	migrations := []string{

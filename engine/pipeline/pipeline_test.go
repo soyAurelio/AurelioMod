@@ -86,8 +86,8 @@ func testPixels() []byte {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			idx := (y*w + x) * 3
-			pixels[idx] = byte(x % 256)       // R
-			pixels[idx+1] = byte(y % 256)     // G
+			pixels[idx] = byte(x % 256)         // R
+			pixels[idx+1] = byte(y % 256)       // G
 			pixels[idx+2] = byte((x + y) % 256) // B
 		}
 	}
@@ -472,12 +472,12 @@ func TestPipeline_WaveSpeed_CleanDecision(t *testing.T) {
 	setL2Called := false
 
 	l1 := &mockL1Cache{
-		decisions:  map[string]*cache.CachedDecision{},
-		setL1Func:  func(_ context.Context, _ string, _ *cache.CachedDecision) error { setL1Called = true; return nil },
+		decisions: map[string]*cache.CachedDecision{},
+		setL1Func: func(_ context.Context, _ string, _ *cache.CachedDecision) error { setL1Called = true; return nil },
 	}
 	l2 := &mockL2Cache{
-		decisions:  nil,
-		setL2Func:  func(_ context.Context, _ uint64, _ *cache.CachedDecision) error { setL2Called = true; return nil },
+		decisions: nil,
+		setL2Func: func(_ context.Context, _ uint64, _ *cache.CachedDecision) error { setL2Called = true; return nil },
 	}
 	wv := &mockWvClient{cachedDecision: nil} // L3 miss
 	a := &mockAnalyzer{
@@ -596,12 +596,12 @@ func TestPipeline_L3Unavailable_SkipToWaveSpeed(t *testing.T) {
 
 // hookCall records a hook invocation for test verification.
 type hookCall struct {
-	workspaceID string
-	contentHash string
-	contentID   string
-	decision    string
-	category    string
-	confidence  float64
+	workspaceID  string
+	contentHash  string
+	contentID    string
+	decision     string
+	category     string
+	confidence   float64
 	processingMs int64
 }
 
@@ -683,9 +683,9 @@ func newFullPipelineWithHooks(
 // TestPipeline_AuditEmissionOnWaveSpeed verifies that after WaveSpeed returns
 // a decision, an audit event is emitted.
 func TestPipeline_AuditEmissionOnWaveSpeed(t *testing.T) {
-	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}   // miss
-	l2 := &mockL2Cache{decisions: nil}                                   // miss
-	wv := &mockWvClient{cachedDecision: nil}                            // L3 miss
+	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
+	l2 := &mockL2Cache{decisions: nil}                                // miss
+	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
 	a := &mockAnalyzer{
 		result: &analyzer.ModerationResult{
 			Decision:     true,
@@ -923,8 +923,8 @@ func TestPipeline_PartialBackPopulationFailure(t *testing.T) {
 // Simulates: cache was populated by a concurrent request between initial check
 // and the last-chance recheck.
 type missThenHitL1 struct {
-	firstCall  bool
-	decisions  map[string]*cache.CachedDecision
+	firstCall bool
+	decisions map[string]*cache.CachedDecision
 }
 
 func (m *missThenHitL1) GetL1(_ context.Context, blake3Hash string) (*cache.CachedDecision, bool) {
@@ -940,8 +940,8 @@ func (m *missThenHitL1) SetL1(_ context.Context, _ string, _ *cache.CachedDecisi
 
 // missThenHitL2 returns empty on first GetL2 call, then hit on subsequent calls.
 type missThenHitL2 struct {
-	firstCall  bool
-	decisions  []*cache.CachedDecision
+	firstCall bool
+	decisions []*cache.CachedDecision
 }
 
 func (m *missThenHitL2) GetL2(_ context.Context, _ uint64, _ int) ([]*cache.CachedDecision, error) {
@@ -956,8 +956,8 @@ func (m *missThenHitL2) SetL2(_ context.Context, _ uint64, _ *cache.CachedDecisi
 
 // missThenHitWv returns nil on first SearchSimilar call, then hit on subsequent calls.
 type missThenHitWv struct {
-	firstCall       bool
-	cachedDecision  *cache.CachedDecision
+	firstCall      bool
+	cachedDecision *cache.CachedDecision
 }
 
 func (m *missThenHitWv) SearchSimilar(_ context.Context, _ string, _ float32) (*cache.CachedDecision, error) {
@@ -968,7 +968,9 @@ func (m *missThenHitWv) SearchSimilar(_ context.Context, _ string, _ float32) (*
 	return m.cachedDecision, nil // hit on second call
 }
 
-func (m *missThenHitWv) IndexDecision(_ context.Context, _ string, _ *cache.CachedDecision) error { return nil }
+func (m *missThenHitWv) IndexDecision(_ context.Context, _ string, _ *cache.CachedDecision) error {
+	return nil
+}
 
 // --- graceful degradation: WaveSpeed error → lastChanceRecheck ---
 
@@ -1051,8 +1053,8 @@ func TestPipeline_WaveSpeedError_L3LastChanceHit(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss
-	l2 := &mockL2Cache{decisions: nil}                                 // L2 miss
-	wv := &missThenHitWv{cachedDecision: cachedBlock()}                // L3 miss first, hit second
+	l2 := &mockL2Cache{decisions: nil}                                // L2 miss
+	wv := &missThenHitWv{cachedDecision: cachedBlock()}               // L3 miss first, hit second
 	a := &mockAnalyzer{
 		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
 	}
@@ -1087,8 +1089,8 @@ func TestPipeline_WaveSpeedError_AllCachesMiss(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss
-	l2 := &mockL2Cache{decisions: nil}                                 // L2 miss
-	wv := &mockWvClient{cachedDecision: nil}                           // L3 miss
+	l2 := &mockL2Cache{decisions: nil}                                // L2 miss
+	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
 	a := &mockAnalyzer{
 		err: errors.New("HTTP 429 Too Many Requests"),
 	}
