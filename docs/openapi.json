@@ -1,0 +1,71 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "AurelioMod Control API", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.aureliomod.com/v1" }],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "summary": "Workspace login",
+        "requestBody": { "content": { "application/json": { "schema": { "properties": { "api_key": { "type": "string" } } } } } },
+        "responses": { "200": { "description": "PASETO token" }, "401": { "description": "Invalid api_key" } }
+      }
+    },
+    "/workspaces": {
+      "get": {
+        "summary": "List workspaces",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Workspace list" } }
+      },
+      "post": {
+        "summary": "Create workspace",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "content": { "application/json": { "schema": { "properties": { "name": { "type": "string" } } } } } },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/workspaces/{id}": {
+      "get": {
+        "summary": "Get workspace",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/workspaces/{id}/stats": {
+      "get": {
+        "summary": "Workspace stats",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Stats" } }
+      }
+    },
+    "/workspaces/{id}/decisions": {
+      "get": {
+        "summary": "Decision history",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": { "200": { "description": "Paginated decisions" } }
+      }
+    },
+    "/billing/checkout": {
+      "post": {
+        "summary": "Create Stripe Checkout Session",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "content": { "application/json": { "schema": { "properties": { "workspace_id": { "type": "string" }, "plan": { "type": "string", "enum": ["bronze","silver","gold"] } } } } } },
+        "responses": { "200": { "description": "Checkout URL" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "PASETO v4" }
+    }
+  }
+}
