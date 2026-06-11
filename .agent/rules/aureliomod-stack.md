@@ -47,7 +47,7 @@
 | Orquestación (Fase 3) | **Kamal + LB externo** | Multi-VPS, pre-baked images | — |
 | CI/CD | **Woodpecker CI** | Self-hosted | Apache 2.0 |
 | Testing | **synctest** (Go 1.26) + **testcontainers** (suite-level) | — | Go stdlib / MIT |
-| Secrets | **Doppler** (Fase 1) → **Kamal env** (Fase 2) → **Vault** (Fase 3) | — | — |
+| Secrets | **env vars + .env** (Fase 1) → **Vault** (Fase 3) | .env se excluye de git | — |
 
 ### Negocio
 | Componente | Tecnología | Nota |

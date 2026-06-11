@@ -44,6 +44,7 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
+      - seccomp:./deployments/security/seccomp-engine.json
     cap_drop:
       - ALL
     tmpfs:

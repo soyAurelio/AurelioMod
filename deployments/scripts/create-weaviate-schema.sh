@@ -9,8 +9,8 @@ WEAVIATE="${1:-http://localhost:8090}"
 echo "Creando schema ModeratedContent en $WEAVIATE..."
 
 curl -sf -X POST "$WEAVIATE/v1/schema" \
-  -H "Content-Type: application/json" \
-  -d '{
+	-H "Content-Type: application/json" \
+	-d '{
     "class": "ModeratedContent",
     "description": "L3 cache: previously moderated content decisions",
     "properties": [

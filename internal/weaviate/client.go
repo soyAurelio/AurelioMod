@@ -7,8 +7,9 @@
 // Properties: content_hash (unique), decision, category, confidence, workspace_id
 //
 // Connection:
-//   Docker network: weaviate:8080
-//   Dev: localhost:8090
+//
+//	Docker network: weaviate:8080
+//	Dev: localhost:8090
 package weaviate
 
 import (
@@ -21,8 +22,8 @@ import (
 	"net/http"
 	"strings"
 
-	v1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
+	v1 "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1"
 )
 
 // WeaviateClient performs lookup and indexing against Weaviate.
