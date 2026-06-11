@@ -38,6 +38,7 @@ import (
 	"github.com/soyAurelio/AurelioMod/engine/service"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
 	"github.com/soyAurelio/AurelioMod/internal/auth"
+	"github.com/soyAurelio/AurelioMod/internal/env"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
 	internalnats "github.com/soyAurelio/AurelioMod/internal/nats"
 	"github.com/soyAurelio/AurelioMod/internal/paseto"
@@ -61,24 +62,17 @@ type serverConfig struct {
 // loadConfig reads configuration from environment variables with sensible defaults.
 func loadConfig() serverConfig {
 	return serverConfig{
-		Port:          envOrDefault("PORT", "8080"),
+		Port:          env.Get("PORT", "8080"),
 		WaveSpeedKey:  os.Getenv("WAVESPEED_API_KEY"),
-		WaveSpeedURL:  envOrDefault("WAVESPEED_API_URL", "https://api.wavespeed.ai"),
-		DragonflyAddr: envOrDefault("DRAGONFLY_ADDR", "localhost:6380"),
-		NATSURL:       envOrDefault("NATS_URL", "nats://localhost:4222"),
-		WeaviateAddr:  envOrDefault("WEAVIATE_ADDR", "http://localhost:8090"),
+		WaveSpeedURL:  env.Get("WAVESPEED_API_URL", "https://api.wavespeed.ai"),
+		DragonflyAddr: env.Get("DRAGONFLY_ADDR", "localhost:6380"),
+		NATSURL:       env.Get("NATS_URL", "nats://localhost:4222"),
+		WeaviateAddr:  env.Get("WEAVIATE_ADDR", "http://localhost:8090"),
 		OTLPEndpoint:  os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		ServiceName:   envOrDefault("OTEL_SERVICE_NAME", "engine"),
+		ServiceName:   env.Get("OTEL_SERVICE_NAME", "engine"),
 	}
 }
 
-// envOrDefault returns the environment variable value, or fallback if unset.
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
 
 // setGOMAXPROCS reserves one logical CPU for FFmpeg subprocesses.
 // It returns the value passed to runtime.GOMAXPROCS.
