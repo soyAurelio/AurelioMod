@@ -28,18 +28,22 @@ import (
 	"github.com/soyAurelio/AurelioMod/internal/paseto"
 )
 
-// pasetoAdapter wraps internal/paseto.TokenManager to satisfy
+// pasetoAdapter wraps internal/paseto.RotatableTokenManager to satisfy
 // controlapi.TokenManager interface.
 type pasetoAdapter struct {
-	*paseto.TokenManager
+	rtm *paseto.RotatableTokenManager
 }
 
 func (pa *pasetoAdapter) VerifyToken(signed string) (controlapi.Token, error) {
-	tok, err := pa.TokenManager.VerifyToken(signed)
+	tok, err := pa.rtm.VerifyToken(signed)
 	if err != nil {
 		return nil, err
 	}
 	return &tokenAdapter{tok}, nil
+}
+
+func (pa *pasetoAdapter) ServiceToken(serviceName string, ttl time.Duration) (string, error) {
+	return pa.rtm.ServiceToken(serviceName, ttl)
 }
 
 // tokenAdapter wraps *pasetolib.Token to satisfy controlapi.Token.
@@ -97,8 +101,9 @@ func main() {
 	}
 	logger.Info("migrations applied")
 
-	// --- PASETO Token Manager ---
-	tm, err := paseto.NewFromHex(pasetoKey)
+	// --- PASETO Token Manager (with key rotation) ---
+	prevKey := os.Getenv("PASETO_PREVIOUS_KEY")
+	rtm, err := paseto.NewRotatable(pasetoKey, prevKey)
 	if err != nil {
 		logger.Error("paseto: key init failed", "error", err)
 		os.Exit(1)
@@ -106,7 +111,7 @@ func main() {
 	logger.Info("paseto token manager initialized")
 
 	// --- Fiber App (with PASETO adapter) ---
-	app := controlapi.New(db, &pasetoAdapter{tm})
+	app := controlapi.New(db, &pasetoAdapter{rtm})
 
 	// --- Stripe Billing (optional, gated by STRIPE_SECRET_KEY) ---
 	if stripeKey := os.Getenv("STRIPE_SECRET_KEY"); stripeKey != "" {
@@ -116,7 +121,7 @@ func main() {
 		)
 
 		// Billing routes (auth required)
-		authMW := controlapi.AuthMiddleware(&pasetoAdapter{tm})
+		authMW := controlapi.AuthMiddleware(&pasetoAdapter{rtm})
 		app.Post("/v1/billing/checkout", authMW, bh.HandleCheckout)
 		app.Post("/v1/billing/portal", authMW, bh.HandlePortal)
 

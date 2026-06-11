@@ -7,6 +7,7 @@ services:
   dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.38.1
     container_name: aureliomod-dragonfly
+    restart: unless-stopped
     ports:
       - "6380:6379"
     command:
@@ -25,6 +26,7 @@ services:
   nats:
     image: nats:2.14.2-alpine
     container_name: aureliomod-nats
+    restart: unless-stopped
     ports:
       - "4222:4222"
       - "8222:8222"
@@ -43,6 +45,7 @@ services:
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.37.7
     container_name: aureliomod-weaviate
+    restart: unless-stopped
     command:
       - "--host"
       - "0.0.0.0"
@@ -82,6 +85,7 @@ services:
   centrifugo:
     image: centrifugo/centrifugo:v6.8.1
     container_name: aureliomod-centrifugo
+    restart: unless-stopped
     ports:
       - "8000:8000"
     command: -c /centrifugo/config.json
@@ -97,14 +101,15 @@ services:
 
   # === Object Storage (dev) ===
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
     container_name: aureliomod-minio
+    restart: unless-stopped
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
@@ -117,6 +122,7 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.144.0
     container_name: aureliomod-vmetrics
+    restart: unless-stopped
     ports:
       - "8428:8428"
     command:
@@ -126,8 +132,9 @@ services:
       - vmetrics_data:/storage
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.7.1
     container_name: aureliomod-tempo
+    restart: unless-stopped
     ports:
       - "3200:3200"
       - "4317:4317"
@@ -139,16 +146,17 @@ services:
       - tempo_data:/var/tempo
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.6.0
     container_name: aureliomod-grafana
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./deployments/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/engine.json:ro
+      - ./deployments/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
 
   # === API Gateway (KrakenD Community Edition) ===
   krakend:
@@ -185,6 +193,7 @@ services:
       context: .
       dockerfile: deployments/Dockerfile.engine
     container_name: aureliomod-engine
+    restart: unless-stopped
     ports:
       - "9090:8080"
     environment:

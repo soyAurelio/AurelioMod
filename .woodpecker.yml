@@ -51,7 +51,7 @@ pipeline:
       - security
       - sbom
     commands:
-      - CGO_ENABLED=0 go build ./cmd/engine
+      - CGO_ENABLED=0 go build ./cmd/...
 
   # Stage 6: Deploy to production (main branch only)
   deploy:

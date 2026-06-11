@@ -31,6 +31,13 @@ services:
       - default
 
   # === Service overrides (block public ports + resource limits) ===
+  ytdlp-sidecar:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+        reservations: { cpus: "0.25", memory: 128m }
+    restart: unless-stopped
   engine:
     ports: []
     deploy:
@@ -58,18 +65,46 @@ services:
 
   dragonfly:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 4g }
+        reservations: { cpus: "0.5", memory: 1g }
   nats:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+        reservations: { cpus: "0.25", memory: 256m }
   weaviate:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: 2g }
+        reservations: { cpus: "0.5", memory: 512m }
   minio:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
   victoriametrics:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
   tempo:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+  centrifugo:
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
   grafana:
     ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
 
 volumes:
   caddy_data:

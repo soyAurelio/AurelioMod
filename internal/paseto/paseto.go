@@ -153,3 +153,8 @@ func (rtm *RotatableTokenManager) VerifyToken(signed string) (*pasetolib.Token, 
 func (rtm *RotatableTokenManager) PublicKeyHex() string {
 	return rtm.current.PublicKeyHex()
 }
+
+// PublicKey returns the current public key for auth interceptor setup.
+func (rtm *RotatableTokenManager) PublicKey() pasetolib.V4AsymmetricPublicKey {
+	return rtm.current.publicKey
+}

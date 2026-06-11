@@ -371,7 +371,8 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		if keyHex == "" {
 			return nil, fmt.Errorf("PASETO_AUTH_ENABLED=true requires PASETO_SECRET_KEY")
 		}
-		tm, err := paseto.NewFromHex(keyHex)
+		prevKeyHex := os.Getenv("PASETO_PREVIOUS_KEY")
+		tm, err := paseto.NewRotatable(keyHex, prevKeyHex)
 		if err != nil {
 			return nil, fmt.Errorf("paseto auth init: %w", err)
 		}
@@ -388,10 +389,16 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 
 	slog.InfoContext(ctx, "connectrpc handler registered", "path", path)
 
+	// Wrap mux with per-request body size limit (50 MB).
+	// Prevents OOM from oversized Analyze requests.
+	const maxBodySize = 50 << 20 // 50 MiB
+	limitedHandler := http.MaxBytesHandler(mux, maxBodySize)
+
 	return &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           mux,
+		Handler:           limitedHandler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}, nil
 }

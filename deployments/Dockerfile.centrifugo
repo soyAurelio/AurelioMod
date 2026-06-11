@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata
 
@@ -8,6 +8,10 @@ ADD https://github.com/centrifugal/centrifugo/releases/download/v6.8.1/centrifug
 RUN tar xzf /tmp/centrifugo_6.8.1_linux_*.tar.gz -C /usr/local/bin/ centrifugo && \
     rm /tmp/centrifugo_*.tar.gz && \
     chmod +x /usr/local/bin/centrifugo
+
+# HEALTHCHECK — verifies centrifugo is serving
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 --start-period=10s \
+    CMD ["wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
 
 EXPOSE 8000
 
