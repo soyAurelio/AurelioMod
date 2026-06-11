@@ -35,6 +35,21 @@ services:
     ports: []
     deploy:
       resources:
+        limits: { cpus: "1.0", memory: 512m }
+        reservations: { cpus: "0.25", memory: 128m }
+    restart: unless-stopped
+
+  engine:
+    ports: []
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:exec,size=256M
+    deploy:
+      resources:
         limits: { cpus: "3.0", memory: 2g }
         reservations: { cpus: "1.0", memory: 512m }
 

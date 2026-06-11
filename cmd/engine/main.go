@@ -89,6 +89,20 @@ func init() {
 }
 
 func main() {
+	// Health check mode: Docker HEALTHCHECK in Distroless images.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		port := env.Get("PORT", "8080")
+		resp, err := http.Get("http://localhost:" + port + "/healthz")
+		if err != nil {
+			os.Exit(1)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// Structured JSON logger (production default)
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

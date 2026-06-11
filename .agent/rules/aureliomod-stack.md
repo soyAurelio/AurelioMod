@@ -440,3 +440,145 @@ steps:
 > **Última actualización**: Junio 2026  
 > **Mantenedor**: AurelioMod  
 > **Cambios a este documento**: PR requerido, revisión de arquitectura requerida.
+
+## 10. Fase 2 — Multi-VPS (documentado, no implementado aún)
+
+### Triggers de migración
+| Trigger | Acción |
+|---|---|
+| >5 clientes pagadores | Migrar de compose a Kamal |
+| >20% CPU sostenido en VPS único | Añadir segundo VPS + LB |
+| Downtime >5min inaceptable | Pre-baked images + auto-scaling |
+| Cliente enterprise pide SOC 2 | Fase 3 completa |
+
+### mTLS interno (requerido en multi-VPS)
+- Certificados generados por step-ca o HashiCorp Vault PKI
+- ConnectRPC con TLS config: `connect.WithTLS(...)` en todos los handlers
+- NATS con TLS: `tls {}` block en nats-server.conf
+- DragonflyDB con TLS: `--tls-port 6380` + certificados
+- Rotación automática de certificados cada 30 días
+
+### Multi-region
+- Engine instances: Frankfurt (Hetzner) + Ashburn (DigitalOcean)
+- DragonflyDB replicación cross-region
+- R2 sirve ambas regiones desde Cloudflare edge
+- Centrifugo con Redis Cluster para sticky sessions cross-region
+
+### Escalamiento
+- Kamal + pre-baked images (Packer)
+- Cloudflare Load Balancer
+- Auto-scaling: cloud-init + docker run en nuevos VPS
+- Secrets: Doppler → Kamal .env.encrypted → HashiCorp Vault
+
+## 11. Observabilidad — Completada ✅
+
+| Componente | Estado | Detalle |
+|---|---|---|
+| Métricas | ✅ | VictoriaMetrics v1.144 + OpenTelemetry SDK |
+| Trazas | ✅ | Grafana Tempo via OTLP gRPC |
+| Logs | ✅ | slog JSON structured en todos los servicios |
+| Dashboards | ✅ | Grafana con engine dashboard provisionado |
+| Alertas | ✅ | vmalert.yml con reglas de latencia y errores |
+| pprof | ✅ | Puerto 6060 protegido con PASETO admin token |
+
+## 12. Seguridad en Runtime — Implementado ✅
+
+| Medida | Estado | Detalle |
+|---|---|---|
+| Distroless | ✅ | Control y Edge-Discord usan gcr.io/distroless/static-debian12:nonroot |
+| Distroless Engine | ✅ | distroless/cc-debian12:nonroot + FFmpeg + nsjail |
+| nsjail sandbox | ✅ | FFmpeg ejecutado con nsjail: sin red, /tmp write-only |
+| yt-dlp sandbox | ✅ | Sidecar container aislado, sin --no-check-certificates |
+| read-only rootfs | ✅ | Todos los contenedores con `read_only: true` en prod |
+| no-new-privileges | ✅ | `security_opt: [no-new-privileges:true]` |
+| Seccomp profiles | ✅ | `seccomp:default_and_perf.json` en prod |
+| non-root user | ✅ | USER nonroot:nonroot en Distroless |
+| capabilities drop | ✅ | `cap_drop: [ALL]` en prod |
+
+## 13. Estrategia de Backups y Disaster Recovery
+
+### Backups
+| Dato | Herramienta | Frecuencia | Retención |
+|---|---|---|---|
+| Neon DB | `pg_dump` + S3 | Diario | 30 días |
+| Weaviate | Backup API → R2 | Diario | 7 días |
+| VictoriaMetrics | `vmbackup` → R2 | Diario | 30 días |
+| DragonflyDB | RDB snapshot | Horario | 24 horas |
+
+### RPO (Recovery Point Objective)
+- Neon DB: 24 horas (backup diario)
+- Weaviate: 24 horas
+- VictoriaMetrics: 24 horas
+- DragonflyDB: 1 hora (cache, puede reconstruirse)
+
+### RTO (Recovery Time Objective)
+- Servicio completo: <2 horas (docker compose up en VPS fresca)
+- Base de datos: <30 minutos (pg_restore desde último dump)
+
+### Procedimiento de restore
+```bash
+# 1. Neon DB
+pg_restore -d "$NEON_DATABASE_URL" latest-backup.dump
+
+# 2. Weaviate
+curl -X POST http://weaviate:8080/v1/backups/restore \
+  -H "Content-Type: application/json" \
+  -d '{"id": "latest"}'
+
+# 3. VictoriaMetrics
+vmrestore -src latest-backup.vm -dst /storage
+
+# 4. DragonflyDB
+# Copiar dump.rdb al directorio de datos y reiniciar
+```
+
+## 14. Pruebas de Carga
+
+### Herramienta: k6 (Grafana)
+```javascript
+// loadtest/k6-smoke.js — Smoke test: 10 VUs, 30s
+import http from 'k6/http';
+export const options = { vus: 10, duration: '30s' };
+export default function() {
+  http.get('http://engine:8080/healthz');
+}
+```
+
+### Escenarios
+| Escenario | VUs | Duración | Objetivo |
+|---|---|---|---|
+| Smoke | 10 | 30s | Health checks básicos |
+| Load | 50 | 5min | 50 req/s al Engine |
+| Stress | 200 | 10min | Encontrar breaking point |
+| Soak | 50 | 1h | Memory leaks, GC pressure |
+
+### Métricas objetivo (Fase 1)
+- p50 < 200ms
+- p95 < 1s
+- p99 < 2s
+- Error rate < 1%
+- Sin OOM kills en 1h de soak test
+
+## 15. Gestión de Incidentes
+
+### Runbooks documentados en docs/INCIDENT_RESPONSE.md
+- Engine caído → restart vía docker compose
+- WaveSpeed inalcanzable → degraded mode (cache-only)
+- Neon DB caída → seguir con cache L1/L2, audit events solo stdout
+- Ataque DDoS → escalar VPS, activar Cloudflare DDoS protection
+
+### Contactos CSIRT (NIS2)
+| País | Organismo | Contacto |
+|---|---|---|
+| Alemania | BSI/CERT-Bund | certbund@bsi.bund.de |
+| Francia | CERT-FR | cert-fr@ssi.gouv.fr |
+| España | INCIBE-CERT | incidencias@incibe.es |
+| Países Bajos | NCSC-NL | cert@ncsc.nl |
+
+### Severidades
+| Nivel | Criterio | Notificación |
+|---|---|---|
+| CRÍTICA | Servicio caído >1h, brecha de datos | CSIRT 24h |
+| ALTA | Rendimiento degradado >4h | CSIRT 72h |
+| MEDIA | Workspace único afectado | Reporte mensual |
+| BAJA | Bug aislado | Registro interno |

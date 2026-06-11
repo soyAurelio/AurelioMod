@@ -34,8 +34,8 @@ var _ R2Store = (*S3AuditStore)(nil)
 //	R2_REGION           — AWS region (default: auto for R2, us-east-1 for MinIO)
 //	R2_AUDIT_ENABLED    — feature gate (default: false)
 type S3AuditStore struct {
-	client    *s3.Client
-	bucket    string
+	client *s3.Client
+	bucket string
 }
 
 // NewS3AuditStoreFromEnv creates an S3AuditStore from environment variables.

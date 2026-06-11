@@ -1,13 +1,12 @@
 # AurelioMod Engine Service — Production Dockerfile
-# Multi-stage build with Distroless runtime for minimal attack surface.
+# Multi-stage build with Distroless cc-debian12 runtime.
 # Pinned versions for deterministic builds — June 2026.
 #
 # Stages:
-#   1. builder   — golang:1.26-alpine  → compile Go binary (CGO_ENABLED=0)
-#   2. ffmpeg    — jrottenberg/ffmpeg  → extract ffmpeg binary
-#   3. nsjail    — nsjail source build  → static nsjail binary (musl-gcc + make)
-#   4. health    — busybox:1.37         → extract wget for HEALTHCHECK
-#   5. runtime   — distroless/static    → final minimal image
+#   1. builder   — golang:1.26-alpine        → compile Go binary (CGO_ENABLED=0)
+#   2. ffmpeg    — jrottenberg/ffmpeg:7.1    → extract FFmpeg + all shared libs
+#   3. nsjail    — nsjail source build        → static nsjail binary
+#   4. runtime   — distroless/cc-debian12     → final minimal image
 
 # === Stage 1: Build Go binary ===
 FROM golang:1.26-alpine AS builder
@@ -26,8 +25,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w -X main.version=0.1.0" \
     -o /bin/engine ./cmd/engine
 
-# === Stage 2: Extract FFmpeg from official image ===
+# === Stage 2: Extract FFmpeg + all shared libraries ===
 FROM jrottenberg/ffmpeg:7.1-ubuntu AS ffmpeg
+
+# FFmpeg binary path in this image
+RUN cp /usr/local/bin/ffmpeg /ffmpeg-bin
 
 # === Stage 3: Build nsjail (glibc-based, Ubuntu) ===
 # nsjail requires glibc (rlimit64, RLIM64_INFINITY) — incompatible with musl/Alpine.
@@ -44,44 +46,51 @@ RUN git clone --depth 1 --branch master https://github.com/google/nsjail.git .
 
 RUN make -j"$(nproc)" && strip nsjail
 
-# === Stage 4: Extract wget for HEALTHCHECK ===
-FROM busybox:1.37 AS health
+# Extract nsjail runtime dependencies (protobuf, libnl)
+RUN mkdir -p /nsjail-deps && \
+    cp /usr/lib/x86_64-linux-gnu/libprotobuf*.so* /nsjail-deps/ && \
+    cp /usr/lib/x86_64-linux-gnu/libnl-3.so* /nsjail-deps/ && \
+    cp /usr/lib/x86_64-linux-gnu/libnl-route-3.so* /nsjail-deps/
 
-# === Stage 5: Runtime — FFmpeg base + Engine binary ===
-# Uses jrottenberg/ffmpeg as base (provides FFmpeg + all shared libs)
-# Distroless deferred to later phase once a static FFmpeg build is available.
-FROM jrottenberg/ffmpeg:7.1-ubuntu AS runtime
+# === Stage 4: Runtime — Distroless cc-debian12 (glibc, libstdc++) ===
+# cc-debian12 includes glibc + libstdc++ but no shell, no package manager.
+# We copy FFmpeg + its .so dependencies from the jrottenberg image.
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 # Copy Go binary
 COPY --from=builder /bin/engine /usr/bin/engine
 
-# Copy nsjail static binary (sandboxed FFmpeg/yt-dlp execution)
+# Copy FFmpeg binary and ALL shared libraries from the jrottenberg image
+COPY --from=ffmpeg /ffmpeg-bin /usr/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
+
+# Copy nsjail + its dependencies
 COPY --from=nsjail /nsjail/nsjail /usr/bin/nsjail
+COPY --from=nsjail /nsjail-deps/ /usr/lib/x86_64-linux-gnu/
 
-# Copy protobuf shared libraries required by nsjail
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libprotobuf32t64 libnl-3-200 libnl-route-3-200 ca-certificates && rm -rf /var/lib/apt/lists/*
+# Copy CA certificates (needed for HTTPS outbound to WaveSpeed, WebRisk)
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy wget for Docker HEALTHCHECK
-COPY --from=health /bin/wget /usr/bin/wget
+# Update library cache
+COPY --from=ffmpeg /etc/ld.so.cache /etc/ld.so.cache
 
-# Symlink FFmpeg to expected path (binary lives at /usr/local/bin/ffmpeg in this image)
-RUN ln -s /usr/local/bin/ffmpeg /usr/bin/ffmpeg
+# Non-root user (provided by distroless/cc-debian12:nonroot)
+USER nonroot:nonroot
 
-# Expose HTTP port
+# Expose HTTP/ConnectRPC port
 EXPOSE 8080
 
 # OCI-compliant labels
 LABEL org.opencontainers.image.title="AurelioMod Engine"
-LABEL org.opencontainers.image.description="Content analysis engine with L1→L2→L3→WaveSpeed pipeline"
-LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.description="Content analysis engine with L1→L2→L3→WaveSpeed pipeline. Distroless runtime with nsjail sandbox."
+LABEL org.opencontainers.image.version="0.2.0"
 LABEL org.opencontainers.image.source="https://github.com/soyAurelio/AurelioMod"
 LABEL org.opencontainers.image.licenses="UNLICENSED"
 LABEL org.opencontainers.image.vendor="AurelioMod"
-LABEL org.opencontainers.image.created="2026-06-05"
+LABEL org.opencontainers.image.created="2026-06-11"
 
-# Health check: verify the engine is responding
+# Health check using native Go binary (no wget/shell needed in Distroless)
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 --start-period=10s \
-    CMD ["/usr/bin/wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+    CMD ["/usr/bin/engine", "-healthcheck"]
 
 ENTRYPOINT ["/usr/bin/engine"]

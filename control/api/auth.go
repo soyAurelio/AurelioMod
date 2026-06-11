@@ -118,11 +118,11 @@ func (h *AuthHandler) HandleVerify(c fiber.Ctx) error {
 		"valid":        true,
 	})
 }
-//
-//	POST /v1/auth/refresh
-//	Header: Authorization: Bearer <token>
-//	200:  {"token": "v4.local...", "expires_in": 86400}
-//	401:  {"error": "invalid or expired token"}
+
+// POST /v1/auth/refresh
+// Header: Authorization: Bearer <token>
+// 200:  {"token": "v4.local...", "expires_in": 86400}
+// 401:  {"error": "invalid or expired token"}
 func (h *AuthHandler) HandleRefresh(c fiber.Ctx) error {
 	workspaceID, ok := c.Locals("workspace_id").(string)
 	if !ok || workspaceID == "" {
