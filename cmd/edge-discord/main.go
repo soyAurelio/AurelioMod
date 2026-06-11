@@ -31,6 +31,7 @@ import (
 	discordhandler "github.com/soyAurelio/AurelioMod/edge/discord/handler"
 	"github.com/soyAurelio/AurelioMod/edge/discord/listener"
 	"github.com/soyAurelio/AurelioMod/edge/discord/ratelimit"
+	"github.com/soyAurelio/AurelioMod/internal/paseto"
 )
 
 func main() {
@@ -79,11 +80,32 @@ func main() {
 	analysisClient := client.NewClient(engineURL, logger)
 
 	// PlanClient: Control API quota check before Engine analysis.
-	// Fails closed — if Control API is unconfigured or unreachable, analysis is denied.
+	// Fails closed — if Control API is unconfigured, analysis is denied.
 	controlURL := os.Getenv("CONTROL_URL")
 	controlToken := os.Getenv("CONTROL_TOKEN")
+
+	// Auto-generate service token if PASETO_SECRET_KEY is available and
+	// CONTROL_TOKEN is not explicitly set. The token is signed with the same
+	// key that Control API uses for validation (PASETO v4 Ed25519).
+	if controlToken == "" {
+		if keyHex := os.Getenv("PASETO_SECRET_KEY"); keyHex != "" {
+			tm, err := paseto.NewFromHex(keyHex)
+			if err != nil {
+				logger.Warn("PASETO_SECRET_KEY invalid, cannot auto-generate service token", "error", err)
+			} else {
+				token, err := tm.ServiceToken("edge-discord", 24*time.Hour)
+				if err != nil {
+					logger.Warn("failed to generate service token", "error", err)
+				} else {
+					controlToken = token
+					logger.Info("service token auto-generated for Control API", "ttl", "24h")
+				}
+			}
+		}
+	}
+
 	if controlURL == "" || controlToken == "" {
-		logger.Warn("CONTROL_URL and CONTROL_TOKEN not set — quota checks disabled, all analysis will be denied")
+		logger.Warn("CONTROL_URL and token not available — quota checks disabled, all analysis will be denied")
 	}
 	planClient := edgecontrol.NewPlanClient(controlURL, controlToken)
 

@@ -34,6 +34,8 @@ services:
       - "--jetstream"
       - "--store_dir=/data"
       - "-m=8222"
+      - "--user=${NATS_USER:-aureliomod}"
+      - "--pass=${NATS_PASSWORD:-aureliomod_dev}"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
       interval: 5s
@@ -201,7 +203,7 @@ services:
       WAVESPEED_PLAN: "${WAVESPEED_PLAN:-bronze}"
       # WAVESPEED_MAX_CONCURRENT overrides WAVESPEED_PLAN if set
       DRAGONFLY_ADDR: "dragonfly:6379"
-      NATS_URL: "nats:4222"
+      NATS_URL: "nats://${NATS_USER:-aureliomod}:${NATS_PASSWORD:-aureliomod_dev}@nats:4222"
       WEAVIATE_ADDR: "http://weaviate:8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
       OTEL_INSECURE: "true"
@@ -288,6 +290,7 @@ services:
       ENGINE_URL: "http://engine:8080"
       CONTROL_URL: "${CONTROL_URL:-http://control:8080}"
       CONTROL_TOKEN: "${CONTROL_TOKEN:-}"
+      PASETO_SECRET_KEY: "${PASETO_SECRET_KEY:-}"
       REQUIRED_GUILD_ID: "${REQUIRED_GUILD_ID:-}"
       ENFORCE_MODERATION: "${ENFORCE_MODERATION:-true}"
       BOT_LANG: "${BOT_LANG:-es}"
