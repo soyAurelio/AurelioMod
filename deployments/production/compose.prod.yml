@@ -39,12 +39,19 @@ services:
         reservations: { cpus: "0.25", memory: 128m }
     restart: unless-stopped
 
+  # Engine: point of contact with untrusted content (FFmpeg, media parsing).
+  # Defense hierarchy (single source of truth per layer):
+  #   1. Docker hardening → protects the Go runtime (read_only, cap_drop, no-new-privileges)
+  #   2. nsjail          → source of truth for FFmpeg sandboxing (seccomp, namespaces, rlimits)
+  #   3. Sidecar         → yt-dlp isolation (separate container)
+  #   4. App-level       → MIME validation, body limits, WebRisk URL check
+  # NOTE: no Docker seccomp profile — nsjail already enforces seccomp internally.
+  #       Dual seccomp (Docker + nsjail) causes non-deterministic failures and debugging hell.
   engine:
     ports: []
     read_only: true
     security_opt:
       - no-new-privileges:true
-      - seccomp:./deployments/security/seccomp-engine.json
     cap_drop:
       - ALL
     tmpfs:

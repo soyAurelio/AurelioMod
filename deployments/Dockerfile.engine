@@ -1,12 +1,17 @@
 # AurelioMod Engine Service — Production Dockerfile
-# Multi-stage build with Distroless cc-debian12 runtime.
-# Pinned versions for deterministic builds — June 2026.
+# Multi-stage build. Pinned versions — June 2026.
 #
 # Stages:
 #   1. builder   — golang:1.26-alpine        → compile Go binary (CGO_ENABLED=0)
-#   2. ffmpeg    — jrottenberg/ffmpeg:7.1    → extract FFmpeg + all shared libs
-#   3. nsjail    — nsjail source build        → static nsjail binary
-#   4. runtime   — distroless/cc-debian12     → final minimal image
+#   2. nsjail    — ubuntu:24.04              → build nsjail from source
+#   3. runtime   — jrottenberg/ffmpeg:7.1    → Engine + FFmpeg + nsjail
+#
+# Why jrottenberg/ffmpeg and not distroless:
+#   - Engine container has ports:[] in production (not externally exposed)
+#   - nsjail sandboxes FFmpeg (the real attack surface), not the container base
+#   - Distroless glibc incompatibility with nsjail caused runtime failures
+#   - Defense hierarchy: nsjail is the source of truth for sandboxing
+#   - Docker hardening (read_only, cap_drop, no-new-privileges) protects the Go runtime
 
 # === Stage 1: Build Go binary ===
 FROM golang:1.26-alpine AS builder
@@ -14,25 +19,15 @@ FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache ca-certificates git
 
 WORKDIR /src
-
-# Cache dependency layer
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source and build
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w -X main.version=0.1.0" \
+    go build -trimpath -ldflags="-s -w -X main.version=0.2.0" \
     -o /bin/engine ./cmd/engine
 
-# === Stage 2: Extract FFmpeg + all shared libraries ===
-FROM jrottenberg/ffmpeg:7.1-ubuntu AS ffmpeg
-
-# FFmpeg binary path in this image
-RUN cp /usr/local/bin/ffmpeg /ffmpeg-bin
-
-# === Stage 3: Build nsjail (glibc-based, Ubuntu) ===
-# nsjail requires glibc (rlimit64, RLIM64_INFINITY) — incompatible with musl/Alpine.
+# === Stage 2: Build nsjail (Ubuntu 24.04 glibc) ===
 FROM ubuntu:24.04 AS nsjail
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -41,55 +36,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /nsjail
-
 RUN git clone --depth 1 --branch master https://github.com/google/nsjail.git .
-
 RUN make -j"$(nproc)" && strip nsjail
 
-# Extract nsjail runtime dependencies (protobuf, libnl)
-RUN mkdir -p /nsjail-deps && \
-    cp /usr/lib/x86_64-linux-gnu/libprotobuf*.so* /nsjail-deps/ && \
-    cp /usr/lib/x86_64-linux-gnu/libnl-3.so* /nsjail-deps/ && \
-    cp /usr/lib/x86_64-linux-gnu/libnl-route-3.so* /nsjail-deps/
+# === Stage 3: Runtime ===
+FROM jrottenberg/ffmpeg:7.1-ubuntu AS runtime
 
-# === Stage 4: Runtime — Distroless cc-debian12 (glibc, libstdc++) ===
-# cc-debian12 includes glibc + libstdc++ but no shell, no package manager.
-# We copy FFmpeg + its .so dependencies from the jrottenberg image.
-FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
-
-# Copy Go binary
+# Go binary (static, CGO_ENABLED=0)
 COPY --from=builder /bin/engine /usr/bin/engine
 
-# Copy FFmpeg binary and ALL shared libraries from the jrottenberg image
-COPY --from=ffmpeg /ffmpeg-bin /usr/bin/ffmpeg
-COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
-
-# Copy nsjail + its dependencies
+# nsjail binary (glibc, Ubuntu 24.04 — same base as jrottenberg/ffmpeg)
 COPY --from=nsjail /nsjail/nsjail /usr/bin/nsjail
-COPY --from=nsjail /nsjail-deps/ /usr/lib/x86_64-linux-gnu/
 
-# Copy CA certificates (needed for HTTPS outbound to WaveSpeed, WebRisk)
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# nsjail runtime dependencies (protobuf, libnl)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libprotobuf32t64 libnl-3-200 libnl-route-3-200 && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-# Update library cache
-COPY --from=ffmpeg /etc/ld.so.cache /etc/ld.so.cache
+# FFmpeg symlink (jrottenberg image has it at /usr/local/bin)
+RUN ln -sf /usr/local/bin/ffmpeg /usr/bin/ffmpeg
 
-# Non-root user (provided by distroless/cc-debian12:nonroot)
-USER nonroot:nonroot
-
-# Expose HTTP/ConnectRPC port
 EXPOSE 8080
 
-# OCI-compliant labels
 LABEL org.opencontainers.image.title="AurelioMod Engine"
-LABEL org.opencontainers.image.description="Content analysis engine with L1→L2→L3→WaveSpeed pipeline. Distroless runtime with nsjail sandbox."
+LABEL org.opencontainers.image.description="Content analysis engine. FFmpeg sandboxed via nsjail."
 LABEL org.opencontainers.image.version="0.2.0"
 LABEL org.opencontainers.image.source="https://github.com/soyAurelio/AurelioMod"
-LABEL org.opencontainers.image.licenses="UNLICENSED"
 LABEL org.opencontainers.image.vendor="AurelioMod"
-LABEL org.opencontainers.image.created="2026-06-11"
 
-# Health check using native Go binary (no wget/shell needed in Distroless)
+# Native health check (no wget/shell needed)
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 --start-period=10s \
     CMD ["/usr/bin/engine", "-healthcheck"]
 

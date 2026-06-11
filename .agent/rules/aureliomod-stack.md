@@ -481,19 +481,33 @@ steps:
 | Alertas | ✅ | vmalert.yml con reglas de latencia y errores |
 | pprof | ✅ | Puerto 6060 protegido con PASETO admin token |
 
-## 12. Seguridad en Runtime — Implementado ✅
+## 12. Seguridad en Runtime — Jerarquía de Defensa
 
-| Medida | Estado | Detalle |
+**Principio**: Cada capa tiene UNA responsabilidad clara. Sin enforcement redundante.
+Si dos capas protegen lo mismo, debugging en incidentes se vuelve imposible.
+
+| Capa | Responsabilidad | Fuente de verdad |
 |---|---|---|
-| Distroless | ✅ | Control y Edge-Discord usan gcr.io/distroless/static-debian12:nonroot |
-| Distroless Engine | ✅ | distroless/cc-debian12:nonroot + FFmpeg + nsjail |
-| nsjail sandbox | ✅ | FFmpeg ejecutado con nsjail: sin red, /tmp write-only |
-| yt-dlp sandbox | ✅ | Sidecar container aislado, sin --no-check-certificates |
-| read-only rootfs | ✅ | Todos los contenedores con `read_only: true` en prod |
-| no-new-privileges | ✅ | `security_opt: [no-new-privileges:true]` |
-| Seccomp profiles | ✅ | `seccomp:default_and_perf.json` en prod |
-| non-root user | ✅ | USER nonroot:nonroot en Distroless |
-| capabilities drop | ✅ | `cap_drop: [ALL]` en prod |
+| **Docker hardening** | Proteger el runtime de Go | `read_only`, `cap_drop: ALL`, `no-new-privileges` |
+| **nsjail** | Sandboxing de FFmpeg | Seccomp, namespaces, rlimits — nsjail ES la política |
+| **Sidecar container** | Aislamiento de yt-dlp | Container separado, sin --no-check-certificates |
+| **App-level** | Validación de negocio | MIME, body limits, WebRisk URL check |
+
+**Por qué Engine usa jrottenberg/ffmpeg y NO distroless**:
+- El contenedor del Engine tiene `ports: []` en producción (no expuesto externamente)
+- nsjail es la fuente de verdad del sandboxing, no la imagen base del contenedor
+- Distroless provocaba incompatibilidad de glibc con nsjail (GLIBC 2.38 vs 2.36)
+- Control y Edge-Discord SÍ usan distroless/static (no ejecutan procesos externos)
+
+**Por qué NO hay seccomp a nivel Docker**: nsjail ya aplica seccomp internamente.
+Dos capas de seccomp (Docker + nsjail) causan fallos no deterministas y
+falsas sensaciones de seguridad. Si un syscall es bloqueado, ¿quién lo bloqueó?
+
+### Debugging en incidentes
+1. ¿El proceso falla al arrancar? → Docker hardening (read_only, capabilities)
+2. ¿FFmpeg falla en runtime? → nsjail (logs del proceso hijo)
+3. ¿yt-dlp no responde? → Sidecar (contenedor independiente)
+4. ¿Request rechazado? → App-level (MIME, body limit, WebRisk)
 
 ## 13. Estrategia de Backups y Disaster Recovery
 
