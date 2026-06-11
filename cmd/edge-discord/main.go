@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -33,6 +34,12 @@ import (
 )
 
 func main() {
+	// Health check mode: invoked by Docker HEALTHCHECK in Distroless images.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		healthcheckMode()
+		return
+	}
+
 	// Structured JSON logging to stdout (slog → container log driver).
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -153,6 +160,24 @@ func main() {
 
 	// Register the mux as an event listener.
 	disgoClient.AddEventListeners(mux)
+
+	// --- Health check HTTP server ---
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+	healthServer := &http.Server{
+		Addr:              ":8080",
+		Handler:           healthMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Warn("health server stopped", "error", err)
+		}
+	}()
 
 	// --- Start Gateway ---
 	if err := disgoClient.OpenGateway(ctx); err != nil {
@@ -357,4 +382,17 @@ func syncCommands(ctx context.Context, client *bot.Client, guildID snowflake.ID)
 		slog.String("event", "slash_commands_registered"),
 		slog.String("guild_id", guildID.String()),
 	)
+}
+
+// healthcheckMode runs a quick health check and exits.
+// Used by Docker HEALTHCHECK in Distroless images (no wget/shell).
+func healthcheckMode() {
+	resp, err := http.Get("http://localhost:8080/healthz")
+	if err != nil {
+		os.Exit(1)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		os.Exit(1)
+	}
 }
