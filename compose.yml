@@ -204,6 +204,7 @@ services:
       NATS_URL: "nats:4222"
       WEAVIATE_ADDR: "http://weaviate:8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
+      OTEL_INSECURE: "true"
       OTEL_SERVICE_NAME: "engine"
       PORT: "8080"
       MEDIA_SANDBOX_ENABLED: "true"
