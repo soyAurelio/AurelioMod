@@ -498,21 +498,27 @@ func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, 
 	ph := hasher.PHash(pixels)
 
 	if d, ok := p.l1cache.GetL1(ctx, l1Hash); ok {
-		return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3, l1Hash, time.Since(start)), nil
+		elapsed := time.Since(start)
+		p.fireHooks(ctx, req, l1Hash, d, elapsed.Milliseconds())
+		return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3, l1Hash, elapsed), nil
 	}
 
 	results, err := p.l2cache.GetL2(ctx, ph, hasher.HammingThreshold)
 	if err != nil {
 		slog.WarnContext(ctx, "L2 cache unavailable", "error", err)
 	} else if len(results) > 0 {
-		return buildResponse(results[0], v1.CacheLevel_CACHE_LEVEL_L2_PHASH, l1Hash, time.Since(start)), nil
+		elapsed := time.Since(start)
+		p.fireHooks(ctx, req, l1Hash, results[0], elapsed.Milliseconds())
+		return buildResponse(results[0], v1.CacheLevel_CACHE_LEVEL_L2_PHASH, l1Hash, elapsed), nil
 	}
 
 	if p.weaviateClient != nil {
 		if d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92); err != nil {
 			slog.WarnContext(ctx, "L3 unavailable", "error", err)
 		} else if d != nil {
-			return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE, l1Hash, time.Since(start)), nil
+			elapsed := time.Since(start)
+			p.fireHooks(ctx, req, l1Hash, d, elapsed.Milliseconds())
+			return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE, l1Hash, elapsed), nil
 		}
 	}
 

@@ -40,7 +40,6 @@ func main() {
 		cmd := exec.CommandContext(ctx, "yt-dlp",
 			"--no-progress",
 			"--print-json",
-			"--no-check-certificates",
 			"--max-redirects", "5",
 			rawURL,
 		)

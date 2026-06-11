@@ -38,6 +38,7 @@ import (
 	"github.com/soyAurelio/AurelioMod/engine/service"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
 	"github.com/soyAurelio/AurelioMod/internal/auth"
+	"github.com/soyAurelio/AurelioMod/engine/quarantine"
 	"github.com/soyAurelio/AurelioMod/internal/env"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
 	internalnats "github.com/soyAurelio/AurelioMod/internal/nats"
@@ -332,6 +333,24 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	}
 
 	// --- Build pipeline ---
+	// Quarantine inversion: block-first, analyze-later state machine.
+	// Uses the same DragonflyDB connection as L1/L2 cache.
+	// Gated by QUARANTINE_ENABLED env var (default: false for dev).
+	var quarantineHook pipeline.QuarantineHook
+	if os.Getenv("QUARANTINE_ENABLED") == "true" {
+		quarantineStore := quarantine.NewDragonflyStore(cacheClient.RDB(), "quarantine:")
+		qm := quarantine.NewQuarantineManager(quarantineStore, quarantine.DefaultTTL)
+		quarantineHook = func(ctx context.Context, contentID, decision, category string, confidence float64) {
+			if _, err := qm.UpdateStatus(ctx, contentID, decision, category, confidence); err != nil {
+				slog.WarnContext(ctx, "quarantine update failed",
+					"content_id", contentID,
+					"error", err,
+				)
+			}
+		}
+		slog.InfoContext(ctx, "quarantine hook enabled (cuarentena invertida)")
+	}
+
 	pipe := pipeline.New(
 		cacheClient, // L1 + L2 cache
 		cacheClient, // L2 cache (same DragonflyDB client)
@@ -340,6 +359,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		wvClient,
 		pipeline.WithAuditHook(auditHook),
 		pipeline.WithDecisionHook(decisionHook),
+		pipeline.WithQuarantineHook(quarantineHook),
 	)
 
 	slog.InfoContext(ctx, "pipeline initialized")

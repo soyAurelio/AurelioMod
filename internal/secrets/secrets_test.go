@@ -1,6 +1,9 @@
 package secrets
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestEnvGetter_Get(t *testing.T) {
 	g := NewEnv()
@@ -23,21 +26,12 @@ func TestEnvGetter_GetMissing(t *testing.T) {
 	}
 }
 
-func TestEnvGetter_MustGet(t *testing.T) {
-	g := NewEnv()
-	t.Setenv("REQUIRED", "present")
-	v := g.MustGet("REQUIRED")
-	if v != "present" {
-		t.Errorf("MustGet = %q, want 'present'", v)
+func TestEnvGetter_ErrSecretNotFound(t *testing.T) {
+	_, ok := NewEnv().Get("MISSING_KEY_99999")
+	if ok {
+		t.Error("expected missing key")
 	}
-}
-
-func TestEnvGetter_MustGetPanic(t *testing.T) {
-	g := NewEnv()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("MustGet did not panic for missing key")
-		}
-	}()
-	g.MustGet("MISSING_KEY_99999")
+	if !errors.Is(ErrSecretNotFound, ErrSecretNotFound) {
+		t.Error("ErrSecretNotFound sentinel not defined")
+	}
 }

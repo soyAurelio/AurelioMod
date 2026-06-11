@@ -815,10 +815,10 @@ func TestPipeline_AllThreeHooksFired(t *testing.T) {
 	}
 }
 
-// TestPipeline_L1Hit_SkipsHooks verifies that when a cache hit occurs
-// (no WaveSpeed call), the integration hooks are NOT called (they fire
-// only on fresh WaveSpeed decisions).
-func TestPipeline_L1Hit_SkipsHooks(t *testing.T) {
+// TestPipeline_L1Hit_FiresAuditHooks verifies that cache hits now emit audit
+// events for GDPR Art.22 / NIS2 Art.21 compliance. Previously cache hits
+// skipped hooks entirely, creating an audit gap.
+func TestPipeline_L1Hit_FiresAuditHooks(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{
@@ -842,8 +842,8 @@ func TestPipeline_L1Hit_SkipsHooks(t *testing.T) {
 	}
 
 	time.Sleep(50 * time.Millisecond)
-	if hooks.count() != 0 {
-		t.Errorf("Expected 0 hook calls on cache hit, got %d", hooks.count())
+	if c := hooks.count(); c < 1 {
+		t.Errorf("Expected audit hooks on L1 cache hit (GDPR/NIS2), got %d hook calls", c)
 	}
 }
 
