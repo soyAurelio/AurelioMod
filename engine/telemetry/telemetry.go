@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -66,6 +67,11 @@ func Init(ctx context.Context, cfg Config) (*Telemetry, error) {
 	if endpoint == "" {
 		return initNoop()
 	}
+
+	// Strip scheme prefix — WithEndpoint expects bare host:port.
+	// "http://tempo:4317" becomes "tempo:4317".
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	endpoint = strings.TrimPrefix(endpoint, "https://")
 
 	serviceName := cfg.ServiceName
 	if serviceName == "" {
