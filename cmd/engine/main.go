@@ -189,7 +189,8 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	mux := http.NewServeMux()
 
 	// Health check endpoint (always available)
-	// Health check (basic — load balancer)
+	// Health check (basic — load balancer, Docker HEALTHCHECK).
+	// Must be lightweight: no FFmpeg, no nsjail.
 	mux.HandleFunc("GET /healthz", healthHandler)
 
 	// --- Wire dependencies ---
@@ -209,9 +210,10 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		"sandbox", sandboxEnabled,
 	)
 
-	// Deep health check: verifies FFmpeg+nsjail+glibc runtime stack.
-	// This is the "blast radius center" smoke test.
-	mux.HandleFunc("GET /healthz/deep", deepHealthHandler(ffmpegRunner))
+	// Readiness probe: startup smoke test — FFmpeg+nsjail+glibc.
+	// Called ONCE at startup by container orchestrator.
+	// NOT a healthcheck — must not be on the load balancer path.
+	mux.HandleFunc("GET /ready", readinessHandler(ffmpegRunner))
 
 	// Web Risk URL reputation service.
 	// By default, WebRisk is best-effort: if credentials are unavailable, the
@@ -430,14 +432,17 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// deepHealthHandler verifies the full runtime stack: FFmpeg + nsjail.
-// This is the "smoke test" health check — it proves the Engine's blast
-// radius center (FFmpeg + nsjail + glibc + syscalls) actually works.
+// readinessHandler is the startup probe — it runs ONCE at container boot
+// to verify the full runtime stack (FFmpeg + nsjail + glibc + libz).
 //
-// GET /healthz/deep
-// 200: {"status":"ok", "ffmpeg":"7.1", "nsjail":true}
-// 503: {"status":"degraded", "error":"..."}
-func deepHealthHandler(ffmpegRunner media.FFmpegRunner) http.HandlerFunc {
+// This is NOT a healthcheck. It must not be called by load balancers.
+// Use case: container orchestrator calls GET /ready before adding the
+// container to the service pool.
+//
+// GET /ready
+// 200: {"status":"ok","ffmpeg":"7.1","nsjail":true}
+// 503: {"status":"degraded","error":"..."}
+func readinessHandler(ffmpegRunner media.FFmpegRunner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
