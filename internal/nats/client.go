@@ -1,11 +1,16 @@
 // Package nats provides NATS JetStream messaging for the AurelioMod pipeline.
 // Edge services publish content analysis jobs; Engine services consume them.
+//
+// Authentication:
+//   - Phase 1 (dev): user:pass in URL (nats://user:pass@host:4222)
+//   - Phase 2 (prod): nkey seed via NATS_NKEY_SEED env var or NkeySeed config field
 package nats
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -20,6 +25,7 @@ type Client struct {
 // Config holds NATS connection parameters.
 type Config struct {
 	URL      string
+	NkeySeed string // nkey private seed (replaces user:pass; Fase 2+)
 	LogLevel slog.Level
 }
 
@@ -33,11 +39,19 @@ func DefaultConfig() Config {
 
 // Connect establishes a persistent connection to NATS with auto-reconnect.
 // Uses a 5-second timeout so the caller doesn't block indefinitely.
+//
+// Auth precedence: NkeySeed config > NATS_NKEY_SEED env var > user:pass in URL.
 func Connect(cfg Config) (*Client, error) {
-	nc, err := nats.Connect(cfg.URL,
+	// Resolve nkey seed — config field takes precedence over env var
+	nkeySeed := cfg.NkeySeed
+	if nkeySeed == "" {
+		nkeySeed = os.Getenv("NATS_NKEY_SEED")
+	}
+
+	opts := []nats.Option{
 		nats.Name("aureliomod"),
-		nats.Timeout(5*time.Second),
-		nats.ReconnectWait(2*time.Second),
+		nats.Timeout(5 * time.Second),
+		nats.ReconnectWait(2 * time.Second),
 		nats.MaxReconnects(-1),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			slog.Warn("nats disconnected", "error", err)
@@ -45,7 +59,19 @@ func Connect(cfg Config) (*Client, error) {
 		nats.ReconnectHandler(func(_ *nats.Conn) {
 			slog.Info("nats reconnected")
 		}),
-	)
+	}
+
+	// Nkey auth (Fase 2+) — stronger than user:pass
+	if nkeySeed != "" {
+		nkeyOpt, err := nats.NkeyOptionFromSeed(nkeySeed)
+		if err != nil {
+			return nil, fmt.Errorf("nats nkey: %w", err)
+		}
+		opts = append(opts, nkeyOpt)
+		slog.Info("nats using nkey authentication")
+	}
+
+	nc, err := nats.Connect(cfg.URL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}

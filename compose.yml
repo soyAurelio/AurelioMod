@@ -31,17 +31,16 @@ services:
       - "4222:4222"
       - "8222:8222"
     command:
+      - "--config=/etc/nats/nats-server.conf"
       - "--jetstream"
       - "--store_dir=/data"
-      - "-m=8222"
-      - "--user=${NATS_USER:-aureliomod}"
-      - "--pass=${NATS_PASSWORD:-aureliomod_dev}"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
       interval: 5s
       retries: 5
     volumes:
       - nats_data:/data
+      - ./deployments/nats-server.conf:/etc/nats/nats-server.conf:ro
 
   # === Vector Database (L3 — búsqueda semántica) ===
   weaviate:
@@ -203,7 +202,8 @@ services:
       WAVESPEED_PLAN: "${WAVESPEED_PLAN:-bronze}"
       # WAVESPEED_MAX_CONCURRENT overrides WAVESPEED_PLAN if set
       DRAGONFLY_ADDR: "dragonfly:6379"
-      NATS_URL: "nats://${NATS_USER:-aureliomod}:${NATS_PASSWORD:-aureliomod_dev}@nats:4222"
+      NATS_URL: "nats://nats:4222"
+      NATS_NKEY_SEED: "${NATS_NKEY_SEED}"
       WEAVIATE_ADDR: "http://weaviate:8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
       OTEL_INSECURE: "true"
