@@ -22,9 +22,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sync"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 

@@ -33,3 +33,5 @@ volumes/
 # OS
 .DS_Store
 Thumbs.db
+# Local Pi runtime state
+.atl/
