@@ -68,10 +68,16 @@ func Init(ctx context.Context, cfg Config) (*Telemetry, error) {
 		return initNoop()
 	}
 
-	// Strip scheme prefix — WithEndpoint expects bare host:port.
-	// "http://tempo:4317" becomes "tempo:4317".
-	endpoint = strings.TrimPrefix(endpoint, "http://")
+	// Normalize endpoint: the gRPC exporters expect bare host:port.
+	// Grafana Cloud gives "https://hostname/path" — strip scheme, path, add port 443.
 	endpoint = strings.TrimPrefix(endpoint, "https://")
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	if idx := strings.Index(endpoint, "/"); idx != -1 {
+		endpoint = endpoint[:idx]
+	}
+	if !strings.Contains(endpoint, ":") {
+		endpoint += ":443"
+	}
 
 	serviceName := cfg.ServiceName
 	if serviceName == "" {
@@ -133,13 +139,21 @@ func initNoop() (*Telemetry, error) {
 
 // initTracerProvider creates an OTLP gRPC trace exporter and configures
 // the global tracer provider with batch export.
-// Uses TLS by default; set OTEL_INSECURE=true for dev/no-TLS environments.
+//
+// TLS: enabled by default (required for Grafana Cloud). Set OTEL_INSECURE=true
+// for local dev (localhost Tempo without TLS).
+// Auth: reads OTEL_EXPORTER_OTLP_HEADERS env var (Grafana Cloud Basic auth).
 func initTracerProvider(ctx context.Context, endpoint string, res *resource.Resource) (*sdktrace.TracerProvider, error) {
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithEndpoint(endpoint),
 	}
 	if os.Getenv("OTEL_INSECURE") == "true" {
 		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+	// Auth headers (Grafana Cloud: Authorization=Basic <base64>)
+	if h := os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"); h != "" {
+		headers := parseOTLPHeaders(h)
+		opts = append(opts, otlptracegrpc.WithHeaders(headers))
 	}
 	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
@@ -159,14 +173,20 @@ func initTracerProvider(ctx context.Context, endpoint string, res *resource.Reso
 }
 
 // initMeterProvider creates an OTLP gRPC metric exporter and configures
-// the global meter provider with periodic export to VictoriaMetrics.
-// Uses TLS by default; set OTEL_INSECURE=true for dev/no-TLS environments.
+// the global meter provider with periodic export to VictoriaMetrics/Grafana Cloud.
+//
+// TLS: enabled by default. Auth: reads OTEL_EXPORTER_OTLP_HEADERS env var.
 func initMeterProvider(ctx context.Context, endpoint string, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
 	opts := []otlpmetricgrpc.Option{
 		otlpmetricgrpc.WithEndpoint(endpoint),
 	}
 	if os.Getenv("OTEL_INSECURE") == "true" {
 		opts = append(opts, otlpmetricgrpc.WithInsecure())
+	}
+	// Auth headers (Grafana Cloud: Authorization=Basic <base64>)
+	if h := os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"); h != "" {
+		headers := parseOTLPHeaders(h)
+		opts = append(opts, otlpmetricgrpc.WithHeaders(headers))
 	}
 	exporter, err := otlpmetricgrpc.New(ctx, opts...)
 	if err != nil {
@@ -184,6 +204,20 @@ func initMeterProvider(ctx context.Context, endpoint string, res *resource.Resou
 
 	otel.SetMeterProvider(mp)
 	return mp, nil
+}
+
+// parseOTLPHeaders parses the OTEL_EXPORTER_OTLP_HEADERS env var (key=value
+// pairs separated by commas) into a map for gRPC metadata.
+// Example: "Authorization=Basic abc123,Other=value" → map[string]string{...}
+func parseOTLPHeaders(raw string) map[string]string {
+	headers := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+		if len(kv) == 2 {
+			headers[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		}
+	}
+	return headers
 }
 
 // Shutdown gracefully shuts down both the tracer and meter providers,
