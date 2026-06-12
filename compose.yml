@@ -42,46 +42,6 @@ services:
       - nats_data:/data
       - ./deployments/nats-server.conf:/etc/nats/nats-server.conf:ro
 
-  # === Vector Database (L3 — búsqueda semántica) ===
-  weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.37.7
-    container_name: aureliomod-weaviate
-    restart: unless-stopped
-    command:
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8080"
-      - "--scheme"
-      - "http"
-    ports:
-      - "8090:8080"
-      - "50051:50051"
-    environment:
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
-      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
-      DEFAULT_VECTORIZER_MODULE: "none"
-      ENABLE_MODULES: ""
-      CLUSTER_HOSTNAME: "node1"
-      QUERY_DEFAULTS_LIMIT: "25"
-      LOG_LEVEL: "info"
-      RAFT_BOOTSTRAP_EXPECT: "1"
-      CLUSTER_IN_LOCALHOST: "1"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8080/v1/.well-known/ready",
-        ]
-      interval: 10s
-      retries: 5
-    volumes:
-      - weaviate_data:/var/lib/weaviate
-
   # === WebSocket/Real-time (dashboard updates) ===
   centrifugo:
     image: centrifugo/centrifugo:v6.8.1
@@ -99,65 +59,6 @@ services:
     depends_on:
       dragonfly:
         condition: service_healthy
-
-  # === Object Storage (dev) ===
-  minio:
-    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
-    container_name: aureliomod-minio
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      retries: 5
-    volumes:
-      - minio_data:/data
-
-  # === Observabilidad ===
-  victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.144.0
-    container_name: aureliomod-vmetrics
-    restart: unless-stopped
-    ports:
-      - "8428:8428"
-    command:
-      - "--storageDataPath=/storage"
-      - "--retentionPeriod=30d"
-    volumes:
-      - vmetrics_data:/storage
-
-  tempo:
-    image: grafana/tempo:2.7.1
-    container_name: aureliomod-tempo
-    restart: unless-stopped
-    ports:
-      - "3200:3200"
-      - "4317:4317"
-      - "4318:4318"
-    command:
-      - "-config.file=/etc/tempo.yaml"
-    volumes:
-      - ./deployments/tempo.yaml:/etc/tempo.yaml:ro
-      - tempo_data:/var/tempo
-
-  grafana:
-    image: grafana/grafana:11.6.0
-    container_name: aureliomod-grafana
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./deployments/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
 
   # === API Gateway (KrakenD Community Edition) ===
   krakend:
@@ -204,9 +105,10 @@ services:
       DRAGONFLY_ADDR: "dragonfly:6379"
       NATS_URL: "nats://nats:4222"
       NATS_NKEY_SEED: "${NATS_NKEY_SEED}"
-      WEAVIATE_ADDR: "http://weaviate:8080"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
-      OTEL_INSECURE: "true"
+      GOMEMLIMIT: "${GOMEMLIMIT:-200MiB}"
+      WEAVIATE_ADDR: "${WEAVIATE_ADDR}"
+      WEAVIATE_API_KEY: "${WEAVIATE_API_KEY:-}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
       OTEL_SERVICE_NAME: "engine"
       PORT: "8080"
       MEDIA_SANDBOX_ENABLED: "true"
@@ -215,20 +117,15 @@ services:
       NEON_AUDIT_ENABLED: "true"
       NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
       R2_AUDIT_ENABLED: "true"
-      R2_ENDPOINT: "http://minio:9000"
-      R2_ACCESS_KEY_ID: "minioadmin"
-      R2_SECRET_ACCESS_KEY: "minioadmin"
-      R2_BUCKET: "aureliomod-audit"
-      R2_REGION: "us-east-1"
+      R2_ENDPOINT: "${R2_ENDPOINT}"
+      R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID}"
+      R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY}"
+      R2_BUCKET: "${R2_BUCKET:-aureliomod-media}"
       YTDLP_SIDECAR_URL: "http://ytdlp-sidecar:8080"
     depends_on:
       dragonfly:
         condition: service_healthy
       nats:
-        condition: service_healthy
-      weaviate:
-        condition: service_healthy
-      minio:
         condition: service_healthy
 
   # === yt-dlp Sidecar (sandboxed HTTP wrapper) ===
@@ -302,8 +199,3 @@ services:
 volumes:
   dragonfly_data:
   nats_data:
-  weaviate_data:
-  minio_data:
-  vmetrics_data:
-  tempo_data:
-  grafana_data:
