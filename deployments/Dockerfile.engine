@@ -50,7 +50,7 @@ COPY --from=nsjail /nsjail/nsjail /usr/bin/nsjail
 
 # nsjail runtime dependencies (protobuf, libnl)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libprotobuf32t64 libnl-3-200 libnl-route-3-200 && \
+    ca-certificates libprotobuf32t64 libnl-3-200 libnl-route-3-200 && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
 # FFmpeg symlink (jrottenberg image has it at /usr/local/bin)
