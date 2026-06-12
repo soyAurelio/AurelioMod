@@ -32,8 +32,6 @@ services:
       - "8222:8222"
     command:
       - "--config=/etc/nats/nats-server.conf"
-      - "--jetstream"
-      - "--store_dir=/data"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
       interval: 5s
