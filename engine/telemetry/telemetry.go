@@ -140,8 +140,22 @@ func initNoop() (*Telemetry, error) {
 // for local dev (localhost Tempo without TLS).
 // Auth: reads OTEL_EXPORTER_OTLP_HEADERS env var (Grafana Cloud Basic auth).
 func initTracerProvider(ctx context.Context, _ string, res *resource.Resource) (*sdktrace.TracerProvider, error) {
-	// Endpoint is read from OTEL_EXPORTER_OTLP_ENDPOINT env var by the SDK.
-	opts := []otlptracehttp.Option{}
+	// Grafana Cloud OTLP: HTTP/protobuf only (no gRPC).
+	// WithEndpoint uses bare hostname. Path /otlp is NOT included —
+	// the exporter appends /v1/traces, /v1/metrics automatically.
+	endpoint := "otlp-gateway-prod-sa-east-1.grafana.net/otlp"
+	if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
+		// Strip scheme and path: https://host/otlp → host
+		ep = strings.TrimPrefix(ep, "https://")
+		ep = strings.TrimPrefix(ep, "http://")
+		if idx := strings.Index(ep, "/"); idx != -1 {
+			ep = ep[:idx]
+		}
+		endpoint = ep
+	}
+	opts := []otlptracehttp.Option{
+		otlptracehttp.WithEndpoint(endpoint),
+	}
 	if os.Getenv("OTEL_INSECURE") == "true" {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
@@ -172,8 +186,19 @@ func initTracerProvider(ctx context.Context, _ string, res *resource.Resource) (
 //
 // TLS: enabled by default. Auth: reads OTEL_EXPORTER_OTLP_HEADERS env var.
 func initMeterProvider(ctx context.Context, _ string, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
-	// Endpoint is read from OTEL_EXPORTER_OTLP_ENDPOINT env var by the SDK.
-	opts := []otlpmetrichttp.Option{}
+	// Same endpoint resolution as initTracerProvider.
+	endpoint := "otlp-gateway-prod-sa-east-1.grafana.net/otlp"
+	if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
+		ep = strings.TrimPrefix(ep, "https://")
+		ep = strings.TrimPrefix(ep, "http://")
+		if idx := strings.Index(ep, "/"); idx != -1 {
+			ep = ep[:idx]
+		}
+		endpoint = ep
+	}
+	opts := []otlpmetrichttp.Option{
+		otlpmetrichttp.WithEndpoint(endpoint),
+	}
 	if os.Getenv("OTEL_INSECURE") == "true" {
 		opts = append(opts, otlpmetrichttp.WithInsecure())
 	}
