@@ -76,3 +76,19 @@ func PHashHex(rgbPixels []byte) string {
 	h := PHash(rgbPixels)
 	return fmt.Sprintf("%016x", h)
 }
+
+// PHashVector converts a perceptual hash (uint64) into a 64-dimensional
+// float32 vector for Weaviate L3 vector search. Each bit becomes 0.0 or 1.0.
+//
+// The vector captures the same perceptual fingerprint as PHash, enabling
+// Weaviate's HNSW-indexed nearVector queries to find visually similar content
+// with cosine similarity > 0.92 — broader than L2's Hamming distance ≤ 5.
+func PHashVector(ph uint64) []float32 {
+	vec := make([]float32, 64)
+	for i := range 64 {
+		if ph&(1<<uint(i)) != 0 {
+			vec[i] = 1.0
+		}
+	}
+	return vec
+}

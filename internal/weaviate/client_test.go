@@ -20,7 +20,7 @@ func TestWeaviateClient_InterfaceContract(t *testing.T) {
 		},
 	}
 
-	result, err := mock.SearchSimilar(t.Context(), "abc123hash", 0.92)
+	result, err := mock.SearchSimilar(t.Context(), testVector(), 0.92)
 	if err != nil {
 		t.Fatalf("SearchSimilar error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestWeaviateClient_InterfaceContract(t *testing.T) {
 func TestWeaviateClient_IndexDecision(t *testing.T) {
 	mock := &mockClient{}
 
-	err := mock.IndexDecision(t.Context(), "abc123hash", &cache.CachedDecision{
+	err := mock.IndexDecision(t.Context(), "abc123hash", testVector(), &cache.CachedDecision{
 		Decision:   2,
 		Confidence: 0.97,
 		Category:   "violence_graphic",
@@ -67,7 +67,7 @@ func TestWeaviateClient_SearchSimilar_NotFound(t *testing.T) {
 		searchResult: nil, // simulates no match found
 	}
 
-	result, err := mock.SearchSimilar(t.Context(), "unknown-hash", 0.92)
+	result, err := mock.SearchSimilar(t.Context(), testVector(), 0.92)
 	if err != nil {
 		t.Fatalf("SearchSimilar error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestWeaviateClient_SearchSimilar_Error(t *testing.T) {
 		searchError: context.DeadlineExceeded,
 	}
 
-	_, err := mock.SearchSimilar(t.Context(), "any-hash", 0.92)
+	_, err := mock.SearchSimilar(t.Context(), nil, 0.92)
 	if err == nil {
 		t.Fatal("Expected error from SearchSimilar, got nil")
 	}
@@ -94,7 +94,7 @@ func TestWeaviateClient_IndexDecision_Error(t *testing.T) {
 		indexError: context.DeadlineExceeded,
 	}
 
-	err := mock.IndexDecision(t.Context(), "any-hash", &cache.CachedDecision{})
+	err := mock.IndexDecision(t.Context(), "any-hash", nil, &cache.CachedDecision{})
 	if err == nil {
 		t.Fatal("Expected error from IndexDecision, got nil")
 	}
@@ -104,6 +104,7 @@ func TestWeaviateClient_IndexDecision_Error(t *testing.T) {
 
 type indexedDecision struct {
 	ContentHash string
+	Vector      []float32
 	Decision    *cache.CachedDecision
 }
 
@@ -115,17 +116,25 @@ type mockClient struct {
 	lastIndexed  *indexedDecision
 }
 
-func (m *mockClient) SearchSimilar(_ context.Context, _ string, _ float32) (*cache.CachedDecision, error) {
+func (m *mockClient) SearchSimilar(_ context.Context, _ []float32, _ float32) (*cache.CachedDecision, error) {
 	if m.searchError != nil {
 		return nil, m.searchError
 	}
 	return m.searchResult, nil
 }
 
-func (m *mockClient) IndexDecision(_ context.Context, contentHash string, decision *cache.CachedDecision) error {
+func (m *mockClient) IndexDecision(_ context.Context, contentHash string, vector []float32, decision *cache.CachedDecision) error {
 	if m.indexError != nil {
 		return m.indexError
 	}
-	m.lastIndexed = &indexedDecision{ContentHash: contentHash, Decision: decision}
+	m.lastIndexed = &indexedDecision{ContentHash: contentHash, Vector: vector, Decision: decision}
 	return nil
+}
+
+// testVector returns a 64-dim float32 vector for testing.
+func testVector() []float32 {
+	vec := make([]float32, 64)
+	vec[0] = 1.0
+	vec[63] = 1.0
+	return vec
 }

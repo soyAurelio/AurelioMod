@@ -276,7 +276,8 @@ func (p *pipeline) lastChanceRecheck(ctx context.Context, l1Hash string, ph uint
 
 	// L3 re-check: Weaviate vector search
 	if p.weaviateClient != nil {
-		if d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92); err != nil {
+		phVector := hasher.PHashVector(ph)
+		if d, err := p.weaviateClient.SearchSimilar(ctx, phVector, 0.92); err != nil {
 			slog.WarnContext(ctx, "degraded fallback: L3 Weaviate unavailable",
 				"error", err,
 			)
@@ -316,7 +317,8 @@ func (p *pipeline) backPopulate(ctx context.Context, l1Hash string, ph uint64, d
 
 	// L3: Weaviate vector index — if client available
 	if p.weaviateClient != nil {
-		if err := p.weaviateClient.IndexDecision(ctx, l1Hash, d); err != nil {
+		phVector := hasher.PHashVector(ph)
+		if err := p.weaviateClient.IndexDecision(ctx, l1Hash, phVector, d); err != nil {
 			slog.WarnContext(ctx, "L3 back-population failed",
 				"error", err,
 				"content_hash", l1Hash,
@@ -586,7 +588,8 @@ func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, 
 	// L3: Weaviate vector search
 	if p.weaviateClient != nil {
 		_, l3Span := tracer.Start(ctx, "cache.L3_check")
-		if d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92); err != nil {
+		phVector := hasher.PHashVector(ph)
+		if d, err := p.weaviateClient.SearchSimilar(ctx, phVector, 0.92); err != nil {
 			slog.WarnContext(ctx, "L3 unavailable", "error", err)
 			l3Span.SetAttributes(attribute.Bool("error", true))
 		} else if d != nil {
