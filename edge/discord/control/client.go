@@ -27,11 +27,13 @@ type ConsumeResponse struct {
 }
 
 // NewPlanClient creates a PlanClient with a PASETO token for auth.
+// Uses a 5s timeout — first request to Control API may be slow due to
+// PASETO verification + Neon DB query + Docker DNS.
 func NewPlanClient(baseURL, token string) *PlanClient {
 	return &PlanClient{
 		baseURL:    baseURL,
 		token:      token,
-		httpClient: &http.Client{Timeout: 3 * time.Second},
+		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 

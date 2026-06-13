@@ -91,6 +91,33 @@ func (l *Listener) OnMessageCreate(event *events.MessageCreate) bool {
 		}
 	}
 
+	// Forwarded messages (Discord API: message_snapshots array).
+	// Each snapshot contains a PartialMessage with the forwarded content.
+	for _, snap := range event.Message.MessageSnapshots {
+		// Forwarded text content may contain URLs
+		if snap.Message.Content != "" {
+			data.Content += " " + snap.Message.Content
+		}
+		// Forwarded attachments
+		for _, att := range snap.Message.Attachments {
+			data.Attachments = append(data.Attachments, AttachmentData{
+				Filename: att.Filename,
+				URL:      att.URL,
+				Size:     att.Size,
+			})
+		}
+		// Forwarded embeds (images in forwarded messages)
+		for _, embed := range snap.Message.Embeds {
+			if embed.Image != nil {
+				data.Attachments = append(data.Attachments, AttachmentData{
+					Filename: "fwd_embed_image",
+					URL:      embed.Image.URL,
+					Size:     embed.Image.Width * embed.Image.Height,
+				})
+			}
+		}
+	}
+
 	return l.shouldAnalyze(data)
 }
 

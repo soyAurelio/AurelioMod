@@ -266,7 +266,7 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 	// only message text URLs are processed. Enables staging/testing without
 	// consuming WaveSpeed credits for image analysis.
 	if os.Getenv("ATTACHMENT_ANALYSIS_ENABLED") == "true" {
-		// Check for attachment binary download first (regular + embed images)
+		// Check for attachment binary download first (regular + embed + forwarded)
 		var urlsToTry []string
 		for _, att := range event.Message.Attachments {
 			urlsToTry = append(urlsToTry, att.URL)
@@ -274,6 +274,17 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 		for _, embed := range event.Message.Embeds {
 			if embed.Image != nil {
 				urlsToTry = append(urlsToTry, embed.Image.URL)
+			}
+		}
+		// Forwarded messages: extract attachments from message_snapshots
+		for _, snap := range event.Message.MessageSnapshots {
+			for _, att := range snap.Message.Attachments {
+				urlsToTry = append(urlsToTry, att.URL)
+			}
+			for _, embed := range snap.Message.Embeds {
+				if embed.Image != nil {
+					urlsToTry = append(urlsToTry, embed.Image.URL)
+				}
 			}
 		}
 		for _, url := range urlsToTry {
