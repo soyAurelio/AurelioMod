@@ -58,6 +58,110 @@ services:
       dragonfly:
         condition: service_healthy
 
+  # === Observability Stack (dev only — prod usa Grafana Cloud) ===
+  grafana:
+    image: grafana/grafana:11.7.2
+    container_name: aureliomod-grafana
+    profiles: ["dev"]
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployments/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+
+  tempo:
+    image: grafana/tempo:2.9.2
+    container_name: aureliomod-tempo
+    profiles: ["dev"]
+    restart: unless-stopped
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    command:
+      - "-config.file=/etc/tempo.yaml"
+    volumes:
+      - ./deployments/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.144.0
+    container_name: aureliomod-vmetrics
+    profiles: ["dev"]
+    restart: unless-stopped
+    ports:
+      - "8428:8428"
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=30d"
+    volumes:
+      - vmetrics_data:/storage
+
+  # === Object Storage (dev only — prod usa Cloudflare R2) ===
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-40-29Z
+    container_name: aureliomod-minio
+    profiles: ["dev"]
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      retries: 5
+    volumes:
+      - minio_data:/data
+
+  # === Vector Database (dev only — prod usa Weaviate Cloud) ===
+  weaviate:
+    image: semitechnologies/weaviate:1.37.0
+    container_name: aureliomod-weaviate
+    profiles: ["dev"]
+    restart: unless-stopped
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--scheme"
+      - "http"
+    ports:
+      - "8090:8080"
+      - "50051:50051"
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "none"
+      ENABLE_MODULES: ""
+      CLUSTER_HOSTNAME: "node1"
+      QUERY_DEFAULTS_LIMIT: "25"
+      LOG_LEVEL: "info"
+      RAFT_BOOTSTRAP_EXPECT: "1"
+      CLUSTER_IN_LOCALHOST: "1"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/v1/.well-known/ready",
+        ]
+      interval: 10s
+      retries: 5
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+
   # === API Gateway (KrakenD Community Edition) ===
   krakend:
     image: devopsfaith/krakend:2.9.3
@@ -200,3 +304,8 @@ services:
 volumes:
   dragonfly_data:
   nats_data:
+  grafana_data:
+  tempo_data:
+  vmetrics_data:
+  minio_data:
+  weaviate_data:
