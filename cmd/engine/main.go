@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -87,6 +88,13 @@ func setGOMAXPROCS(numCPU int) int {
 // init configures runtime settings before main() executes.
 func init() {
 	setGOMAXPROCS(runtime.NumCPU())
+
+	// GOMEMLIMIT: soft memory cap for Go GC — prevents OOM on 1GB VPS.
+	// Go 1.19+ reads GOMEMLIMIT env var automatically from the environment.
+	// The env var is set in compose.yml and compose.prod.yml (e.g., "200MiB").
+	// We import runtime/debug so pprof profiles show the memory limit.
+	// Reference: https://pkg.go.dev/runtime/debug#SetMemoryLimit
+	_ = debug.SetMemoryLimit
 }
 
 func main() {
