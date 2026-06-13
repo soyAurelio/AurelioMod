@@ -59,7 +59,11 @@ func main() {
 		logger.Warn("ENGINE_URL not set, using default", slog.String("engine_url", engineURL))
 	}
 
-	workspaceID := os.Getenv("REQUIRED_GUILD_ID")
+	workspaceID := os.Getenv("WORKSPACE_ID")
+	if workspaceID == "" {
+		// Fallback to guild ID for backward compatibility
+		workspaceID = os.Getenv("REQUIRED_GUILD_ID")
+	}
 	if workspaceID == "" {
 		logger.Warn("REQUIRED_GUILD_ID not set — commands will be registered globally")
 	}
