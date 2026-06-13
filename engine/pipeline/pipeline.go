@@ -362,9 +362,15 @@ func buildResponse(d *cache.CachedDecision, level v1.CacheLevel, l1Hash string, 
 }
 
 // fireHooks launches all configured integration hooks in fire-and-forget
-// goroutines. Hooks are non-blocking — they must never delay the pipeline
-// response. Failures within hooks are logged by the hook implementations.
+// goroutines. Hooks use a detached context (WithoutCancel) so they survive
+// beyond the HTTP request lifecycle. Hooks are non-blocking — they must
+// never delay the pipeline response. Failures within hooks are logged by
+// the hook implementations.
 func (p *pipeline) fireHooks(ctx context.Context, req *v1.AnalyzeRequest, contentHash string, d *cache.CachedDecision, processingMs int64) {
+	// Detach from request context — audit/Neon/R2 inserts must complete
+	// even after the HTTP response is sent and request context canceled.
+	detached := context.WithoutCancel(ctx)
+
 	decision := d.Decision.String()
 	workspaceID := req.WorkspaceId
 	contentID := req.ContentId
@@ -374,7 +380,7 @@ func (p *pipeline) fireHooks(ctx context.Context, req *v1.AnalyzeRequest, conten
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			p.auditHook(ctx, workspaceID, contentHash, decision, d.Category, d.Confidence, processingMs)
+			p.auditHook(detached, workspaceID, contentHash, decision, d.Category, d.Confidence, processingMs)
 		}()
 	}
 
@@ -383,7 +389,7 @@ func (p *pipeline) fireHooks(ctx context.Context, req *v1.AnalyzeRequest, conten
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			p.decisionHook(ctx, workspaceID, contentHash, decision, d.Category, d.Confidence)
+			p.decisionHook(detached, workspaceID, contentHash, decision, d.Category, d.Confidence)
 		}()
 	}
 
@@ -392,7 +398,7 @@ func (p *pipeline) fireHooks(ctx context.Context, req *v1.AnalyzeRequest, conten
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			p.quarantineHook(ctx, contentID, decision, d.Category, d.Confidence)
+			p.quarantineHook(detached, contentID, decision, d.Category, d.Confidence)
 		}()
 	}
 }

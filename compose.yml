@@ -295,6 +295,7 @@ services:
       PASETO_SECRET_KEY: "${PASETO_SECRET_KEY:-}"
       REQUIRED_GUILD_ID: "${REQUIRED_GUILD_ID:-}"
       ENFORCE_MODERATION: "${ENFORCE_MODERATION:-true}"
+      ATTACHMENT_ANALYSIS_ENABLED: "true"
       BOT_LANG: "${BOT_LANG:-es}"
     depends_on:
       engine:
