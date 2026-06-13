@@ -2,7 +2,7 @@
   "class": "ModeratedContent",
   "description": "Cache de decisiones de moderación con búsqueda vectorial L3",
   "vectorizer": "none",
-  "vectorIndexType": "hnsw",
+  "vectorIndexType": "hfresh",
   "vectorIndexConfig": {
     "skip": false,
     "distance": "cosine"
