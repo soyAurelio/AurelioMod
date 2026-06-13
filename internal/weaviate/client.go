@@ -39,9 +39,13 @@ type HTTPClient struct {
 }
 
 // NewHTTPClient creates a Weaviate HTTP client.
-func NewHTTPClient(baseURL string) *HTTPClient {
+// Auto-prepends https:// if the addr has no scheme.
+func NewHTTPClient(addr string) *HTTPClient {
+	if !strings.Contains(addr, "://") {
+		addr = "https://" + addr
+	}
 	return &HTTPClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    strings.TrimRight(addr, "/"),
 		httpClient: &http.Client{},
 	}
 }
