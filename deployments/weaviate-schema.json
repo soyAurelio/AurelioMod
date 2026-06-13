@@ -1,0 +1,31 @@
+{
+  "class": "ModeratedContent",
+  "description": "Cache de decisiones de moderación (L3 vector search layer)",
+  "vectorizer": "none",
+  "properties": [
+    {
+      "name": "content_hash",
+      "dataType": ["string"],
+      "description": "BLAKE3 hash de píxeles RGB24 normalizados",
+      "indexFilterable": true,
+      "tokenization": "field"
+    },
+    {
+      "name": "decision",
+      "dataType": ["string"],
+      "description": "Decisión de moderación: ALLOW, BLOCK, QUEUED, ERROR",
+      "indexFilterable": true
+    },
+    {
+      "name": "category",
+      "dataType": ["string"],
+      "description": "Categoría de contenido detectada por WaveSpeed",
+      "indexFilterable": true
+    },
+    {
+      "name": "confidence",
+      "dataType": ["number"],
+      "description": "Confianza del modelo (0.0 - 1.0)"
+    }
+  ]
+}

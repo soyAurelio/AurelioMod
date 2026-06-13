@@ -41,11 +41,29 @@ func DefaultConfig() Config {
 // Uses a 5-second timeout so the caller doesn't block indefinitely.
 //
 // Auth precedence: NkeySeed config > NATS_NKEY_SEED env var > user:pass in URL.
+// NkeyOptionFromSeed expects a file path, so the raw seed is written to a
+// temp file first (cleaned up after connect).
 func Connect(cfg Config) (*Client, error) {
 	// Resolve nkey seed — config field takes precedence over env var
 	nkeySeed := cfg.NkeySeed
 	if nkeySeed == "" {
 		nkeySeed = os.Getenv("NATS_NKEY_SEED")
+	}
+
+	// Nkey auth requires a file — write seed to temp file
+	var nkeyFile string
+	if nkeySeed != "" {
+		f, err := os.CreateTemp("", "aureliomod-nkey-*.seed")
+		if err != nil {
+			return nil, fmt.Errorf("nats nkey temp file: %w", err)
+		}
+		if _, err := f.WriteString(nkeySeed); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return nil, fmt.Errorf("nats nkey write: %w", err)
+		}
+		f.Close()
+		nkeyFile = f.Name()
 	}
 
 	opts := []nats.Option{
@@ -62,8 +80,9 @@ func Connect(cfg Config) (*Client, error) {
 	}
 
 	// Nkey auth (Fase 2+) — stronger than user:pass
-	if nkeySeed != "" {
-		nkeyOpt, err := nats.NkeyOptionFromSeed(nkeySeed)
+	if nkeyFile != "" {
+		defer os.Remove(nkeyFile) // clean up after connect loads the key
+		nkeyOpt, err := nats.NkeyOptionFromSeed(nkeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("nats nkey: %w", err)
 		}

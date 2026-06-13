@@ -1,6 +1,7 @@
 # Entorno
 .env
 .env.*
+!.env.example
 *.local
 
 # Go
@@ -35,3 +36,4 @@ volumes/
 Thumbs.db
 # Local Pi runtime state
 .atl/
+openspec/

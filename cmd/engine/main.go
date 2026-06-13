@@ -10,7 +10,7 @@
 //	WAVESPEED_API_URL        — WaveSpeed API base URL (default: https://api.wavespeed.ai)
 //	DRAGONFLY_ADDR           — DragonflyDB address (default: localhost:6380)
 //	NATS_URL                 — NATS server URL (default: nats://localhost:4222)
-//	WEAVIATE_ADDR            — Weaviate HTTP base URL (default: http://localhost:8090)
+//	WEAVIATE_HOSTNAME        — Weaviate Cloud hostname (default: http://localhost:8090)
 //	OTEL_EXPORTER_OTLP_ENDPOINT — OTLP collector endpoint (default: none = noop)
 //	OTEL_SERVICE_NAME        — OpenTelemetry service name (default: engine)
 //	WEBRISK_API_KEY          — Google Web Risk API key (optional, ADC fallback)
@@ -69,7 +69,7 @@ func loadConfig() serverConfig {
 		WaveSpeedURL:  env.Get("WAVESPEED_API_URL", "https://api.wavespeed.ai"),
 		DragonflyAddr: env.Get("DRAGONFLY_ADDR", "localhost:6380"),
 		NATSURL:       env.Get("NATS_URL", "nats://localhost:4222"),
-		WeaviateAddr:  env.Get("WEAVIATE_ADDR", "http://localhost:8090"),
+		WeaviateAddr:  env.Get("WEAVIATE_HOSTNAME", "http://localhost:8090"),
 		OTLPEndpoint:  os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		ServiceName:   env.Get("OTEL_SERVICE_NAME", "engine"),
 	}

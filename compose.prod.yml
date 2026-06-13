@@ -1,0 +1,103 @@
+# AurelioMod — Producción (Fase 2a: Vultr SP, single VPS)
+# Override de compose.yml con hardening de seguridad y límites de recursos.
+#
+# Uso:
+#   docker compose -f compose.yml -f compose.prod.yml up -d
+#
+# Requisitos previos:
+#   - .env con todas las variables de producción
+#   - Caddy para SSL (Let's Encrypt)
+
+services:
+  # === Reverse Proxy (SSL + rate limiting) ===
+  caddy:
+    image: caddy:2.9-alpine
+    container_name: aureliomod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deployments/production/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - default
+
+  # === Production hardening: cerrar puertos al host ===
+  # Solo Caddy expone 80/443. El resto de servicios hablan por Docker network.
+  engine:
+    ports: []
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:exec,size=256M
+    deploy:
+      resources:
+        limits: { cpus: "3.0", memory: 1g }
+        reservations: { cpus: "0.5", memory: 256m }
+
+  control:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+
+  edge-discord:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+
+  krakend:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128m }
+
+  dragonfly:
+    ports: []
+    command:
+      - "--cache_mode=true"
+      - "--maxmemory=256mb"
+      - "--minloglevel=2"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 320m }
+        reservations: { cpus: "0.25", memory: 64m }
+
+  nats:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128m }
+        reservations: { cpus: "0.1", memory: 32m }
+
+  centrifugo:
+    ports: []
+    volumes:
+      - ./deployments/centrifugo.prod.json:/centrifugo/config.json:ro
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128m }
+
+  ytdlp-sidecar:
+    ports: []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+        reservations: { cpus: "0.25", memory: 128m }
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
