@@ -23,6 +23,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
@@ -167,6 +171,16 @@ func New(
 // FrameExtractor and analyzes each frame individually (spec R3.1).
 func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.AnalyzeResponse, error) {
 	start := time.Now()
+
+	// Root span: pipeline.analyze
+	tracer := otel.Tracer("pipeline")
+	ctx, span := tracer.Start(ctx, "pipeline.analyze",
+		trace.WithAttributes(
+			attribute.String("workspace_id", req.WorkspaceId),
+			attribute.String("content_type", req.ContentType.String()),
+		),
+	)
+	defer span.End()
 
 	// External URL path: check URL safety BEFORE any content fetch.
 	// Malicious URLs are blocked immediately per NIS2/DSA requirements.
@@ -523,6 +537,8 @@ func (p *pipeline) executeFrameExtraction(
 // executeStandard runs the standard pipeline from normalize through WaveSpeed.
 // Extracted as a separate method to be reusable from the frame extraction path.
 func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, start time.Time) (*v1.AnalyzeResponse, error) {
+	tracer := otel.Tracer("pipeline")
+
 	normalized, err := p.normalizer.Normalize(ctx, req.RawBytes)
 	if err != nil {
 		return nil, fmt.Errorf("normalize: %w", err)
@@ -531,29 +547,60 @@ func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, 
 	l1Hash := hasher.HashL1(pixels)
 	ph := hasher.PHash(pixels)
 
+	// L1: BLAKE3 exact match
+	_, l1Span := tracer.Start(ctx, "cache.L1_check",
+		trace.WithAttributes(attribute.String("hash", l1Hash[:16])),
+	)
 	if d, ok := p.l1cache.GetL1(ctx, l1Hash); ok {
+		l1Span.SetAttributes(attribute.Bool("hit", true))
+		l1Span.End()
 		elapsed := time.Since(start)
 		p.fireHooks(ctx, req, l1Hash, d, elapsed.Milliseconds())
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.String("cache_level", "L1"),
+			attribute.Bool("cache_hit", true),
+		)
 		return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L1_BLAKE3, l1Hash, elapsed), nil
 	}
+	l1Span.End()
 
+	// L2: pHash perceptual match
+	_, l2Span := tracer.Start(ctx, "cache.L2_check")
 	results, err := p.l2cache.GetL2(ctx, ph, hasher.HammingThreshold)
 	if err != nil {
 		slog.WarnContext(ctx, "L2 cache unavailable", "error", err)
+		l2Span.SetAttributes(attribute.Bool("error", true))
 	} else if len(results) > 0 {
+		l2Span.SetAttributes(attribute.Bool("hit", true), attribute.Int("candidates", len(results)))
+		l2Span.End()
 		elapsed := time.Since(start)
 		p.fireHooks(ctx, req, l1Hash, results[0], elapsed.Milliseconds())
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.String("cache_level", "L2"),
+			attribute.Bool("cache_hit", true),
+		)
 		return buildResponse(results[0], v1.CacheLevel_CACHE_LEVEL_L2_PHASH, l1Hash, elapsed), nil
 	}
+	l2Span.End()
 
+	// L3: Weaviate vector search
 	if p.weaviateClient != nil {
+		_, l3Span := tracer.Start(ctx, "cache.L3_check")
 		if d, err := p.weaviateClient.SearchSimilar(ctx, l1Hash, 0.92); err != nil {
 			slog.WarnContext(ctx, "L3 unavailable", "error", err)
+			l3Span.SetAttributes(attribute.Bool("error", true))
 		} else if d != nil {
+			l3Span.SetAttributes(attribute.Bool("hit", true))
+			l3Span.End()
 			elapsed := time.Since(start)
 			p.fireHooks(ctx, req, l1Hash, d, elapsed.Milliseconds())
+			trace.SpanFromContext(ctx).SetAttributes(
+				attribute.String("cache_level", "L3"),
+				attribute.Bool("cache_hit", true),
+			)
 			return buildResponse(d, v1.CacheLevel_CACHE_LEVEL_L3_WEAVIATE, l1Hash, elapsed), nil
 		}
+		l3Span.End()
 	}
 
 	if p.analyzer == nil {
