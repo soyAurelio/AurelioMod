@@ -1,7 +1,12 @@
 {
   "class": "ModeratedContent",
-  "description": "Cache de decisiones de moderación (L3 vector search layer)",
+  "description": "Cache de decisiones de moderación con búsqueda vectorial L3",
   "vectorizer": "none",
+  "vectorIndexType": "hnsw",
+  "vectorIndexConfig": {
+    "skip": false,
+    "distance": "cosine"
+  },
   "properties": [
     {
       "name": "content_hash",

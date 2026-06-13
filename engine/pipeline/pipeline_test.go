@@ -371,20 +371,22 @@ type mockWvClient struct {
 	err            error
 	lastIndexed    *cache.CachedDecision
 	lastHash       string
+	lastVector     []float32
 }
 
 var _ weaviate.WeaviateClient = (*mockWvClient)(nil)
 
-func (m *mockWvClient) SearchSimilar(_ context.Context, _ string, _ float32) (*cache.CachedDecision, error) {
+func (m *mockWvClient) SearchSimilar(_ context.Context, _ []float32, _ float32) (*cache.CachedDecision, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.cachedDecision, nil
 }
 
-func (m *mockWvClient) IndexDecision(_ context.Context, contentHash string, decision *cache.CachedDecision) error {
+func (m *mockWvClient) IndexDecision(_ context.Context, contentHash string, vector []float32, decision *cache.CachedDecision) error {
 	m.lastIndexed = decision
 	m.lastHash = contentHash
+	m.lastVector = vector
 	return nil
 }
 
@@ -960,7 +962,7 @@ type missThenHitWv struct {
 	cachedDecision *cache.CachedDecision
 }
 
-func (m *missThenHitWv) SearchSimilar(_ context.Context, _ string, _ float32) (*cache.CachedDecision, error) {
+func (m *missThenHitWv) SearchSimilar(_ context.Context, _ []float32, _ float32) (*cache.CachedDecision, error) {
 	if !m.firstCall {
 		m.firstCall = true
 		return nil, nil // miss on first call
@@ -968,7 +970,7 @@ func (m *missThenHitWv) SearchSimilar(_ context.Context, _ string, _ float32) (*
 	return m.cachedDecision, nil // hit on second call
 }
 
-func (m *missThenHitWv) IndexDecision(_ context.Context, _ string, _ *cache.CachedDecision) error {
+func (m *missThenHitWv) IndexDecision(_ context.Context, _ string, _ []float32, _ *cache.CachedDecision) error {
 	return nil
 }
 
