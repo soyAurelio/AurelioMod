@@ -44,17 +44,20 @@ type WeaviateClient interface {
 // HTTPClient implements WeaviateClient using Weaviate's REST/GraphQL API.
 type HTTPClient struct {
 	baseURL    string
+	apiKey     string
 	httpClient *http.Client
 }
 
 // NewHTTPClient creates a Weaviate HTTP client.
 // Auto-prepends https:// if the addr has no scheme.
-func NewHTTPClient(addr string) *HTTPClient {
+// apiKey is the Weaviate Cloud API key (sent as Bearer token). Empty for local/anonymous.
+func NewHTTPClient(addr, apiKey string) *HTTPClient {
 	if !strings.Contains(addr, "://") {
 		addr = "https://" + addr
 	}
 	return &HTTPClient{
 		baseURL:    strings.TrimRight(addr, "/"),
+		apiKey:     apiKey,
 		httpClient: &http.Client{},
 	}
 }
@@ -99,6 +102,9 @@ func (c *HTTPClient) IndexDecision(ctx context.Context, contentHash string, vect
 		return fmt.Errorf("weaviate IndexDecision: decision must not be nil")
 	}
 
+	// Weaviate requires UUIDs for object IDs. Convert BLAKE3 hash to UUID format.
+	objectID := hashToUUID(contentHash)
+
 	props := map[string]interface{}{
 		"content_hash": contentHash,
 		"decision":     decision.Decision.String(),
@@ -108,7 +114,7 @@ func (c *HTTPClient) IndexDecision(ctx context.Context, contentHash string, vect
 
 	payload := map[string]interface{}{
 		"class":      "ModeratedContent",
-		"id":         contentHash,
+		"id":         objectID,
 		"vector":     vector,
 		"properties": props,
 	}
@@ -121,6 +127,7 @@ func (c *HTTPClient) IndexDecision(ctx context.Context, contentHash string, vect
 		return fmt.Errorf("weaviate index request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeader(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -151,6 +158,7 @@ func (c *HTTPClient) graphQL(ctx context.Context, body map[string]string) (map[s
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeader(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -235,6 +243,23 @@ func float32VectorToString(vec []float32) string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+// hashToUUID converts a 64-char BLAKE3 hex hash to Weaviate-compatible UUID format.
+// Uses the first 32 chars: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+func hashToUUID(hash string) string {
+	if len(hash) < 32 {
+		// Fallback: pad with zeros
+		hash = hash + "00000000000000000000000000000000"
+	}
+	return hash[0:8] + "-" + hash[8:12] + "-" + hash[12:16] + "-" + hash[16:20] + "-" + hash[20:32]
+}
+
+// setAuthHeader adds the Weaviate API key to the request if configured.
+func (c *HTTPClient) setAuthHeader(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 }
 
 var _ WeaviateClient = (*HTTPClient)(nil)

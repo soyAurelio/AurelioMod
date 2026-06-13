@@ -265,7 +265,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	// Weaviate L3 client (optional)
 	var wvClient weaviate.WeaviateClient
 	if cfg.WeaviateAddr != "" {
-		wvClient = weaviate.NewHTTPClient(cfg.WeaviateAddr)
+		wvClient = weaviate.NewHTTPClient(cfg.WeaviateAddr, os.Getenv("WEAVIATE_API_KEY"))
 		slog.InfoContext(ctx, "weaviate client created", "addr", cfg.WeaviateAddr)
 	}
 
