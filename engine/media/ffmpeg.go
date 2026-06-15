@@ -24,7 +24,7 @@ type FFmpegRunner interface {
 
 	// ExtractCollage detects key frames via scene-change detection and
 	// merges them into a single 3x3 grid collage JPEG. This reduces
-	// WaveSpeed API calls from N frames to 1 collage (~150KB).
+	// AI moderation API calls from N frames to 1 collage (~150KB).
 	// Returns JPEG-encoded collage bytes.
 	ExtractCollage(ctx context.Context, inputPath string) ([]byte, error)
 }
@@ -79,7 +79,7 @@ func (n *NsJailFFmpeg) Run(ctx context.Context, args []string, stdin []byte) ([]
 // separate ffmpeg invocation to ensure clean PNG boundaries.
 //
 // Frames are extracted sequentially (one ffmpeg call per frame) per
-// the design decision: Bulkhead(1) on WaveSpeed means no parallelism
+// the design decision: Bulkhead(1) on AI moderation means no parallelism
 // benefit from concurrent extraction.
 func (n *NsJailFFmpeg) ExtractFrames(ctx context.Context, inputPath string, timestampSec int, maxFrames int) ([][]byte, error) {
 	if maxFrames < 1 {
@@ -122,7 +122,7 @@ func (n *NsJailFFmpeg) ExtractFrames(ctx context.Context, inputPath string, time
 
 // ExtractCollage detects key frames via scene-change detection (gt(scene,0.3))
 // and merges up to 9 frames into a single 3x3 grid collage JPEG (~150KB).
-// This reduces WaveSpeed API calls from N frames to 1 collage.
+// This reduces AI moderation API calls from N frames to 1 collage.
 //
 // Single ffmpeg invocation:
 //

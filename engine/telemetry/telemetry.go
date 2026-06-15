@@ -8,7 +8,7 @@
 // Spans are created at pipeline stage boundaries:
 //   - pipeline.analyze (root span)
 //   - cache.l1_check, cache.l2_check, cache.l3_check
-//   - wavespeed.analyze
+//   - AI moderation.analyze
 //
 // Metrics:
 //   - cache_hits_total (by cache_level: l1, l2, l3)

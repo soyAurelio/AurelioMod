@@ -55,7 +55,7 @@ func (h *Handler) Analyze(ctx context.Context, req *connect.Request[v1.AnalyzeRe
 	}
 
 	// MIME validation gate — rejects contradictory Content-Type before
-	// any subprocess is spawned (FFmpeg, WaveSpeed, etc.).
+	// any subprocess is spawned (FFmpeg, AI moderation, etc.).
 	if h.enforceMIME {
 		mimeStr := contentTypeToMIME(msg.ContentType)
 		if mimeStr != "" {

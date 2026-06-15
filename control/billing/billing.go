@@ -1,7 +1,7 @@
 // Package billing handles Stripe subscription checkout, customer portal,
 // and webhook processing for AurelioMod workspace plans.
 //
-// Plans map to WaveSpeed concurrency tiers:
+// Plans map to AI moderation concurrency tiers:
 //
 //	bronze (free) → 3 concurrent tasks
 //	silver       → 100 concurrent tasks

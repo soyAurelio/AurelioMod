@@ -62,7 +62,7 @@ func TestS3AuditStore_StoreAudit(t *testing.T) {
 			Decision:              "blocked",
 			Confidence:            0.94,
 			Category:              "violence_graphic",
-			AnalystVersion:        "wavespeed-v3.2",
+			AnalystVersion:        "AI moderation-v3.2",
 			NormalizationPipeline: "480p+strip_exif+jpeg_q85",
 			ProcessingMs:          142,
 			TimestampUTC:          time.Date(2026, 6, 6, 14, 30, 0, 0, time.UTC),

@@ -42,7 +42,7 @@ const (
 type ContentAnalysisServiceClient interface {
 	// Analyze submits content for moderation analysis.
 	// Returns immediately with a decision (block/allow) based on cache hits,
-	// or a QUEUED status if WaveSpeed analysis is required.
+	// or a QUEUED status if AI moderation analysis is required.
 	Analyze(context.Context, *connect.Request[v1.AnalyzeRequest]) (*connect.Response[v1.AnalyzeResponse], error)
 }
 
@@ -81,7 +81,7 @@ func (c *contentAnalysisServiceClient) Analyze(ctx context.Context, req *connect
 type ContentAnalysisServiceHandler interface {
 	// Analyze submits content for moderation analysis.
 	// Returns immediately with a decision (block/allow) based on cache hits,
-	// or a QUEUED status if WaveSpeed analysis is required.
+	// or a QUEUED status if AI moderation analysis is required.
 	Analyze(context.Context, *connect.Request[v1.AnalyzeRequest]) (*connect.Response[v1.AnalyzeResponse], error)
 }
 

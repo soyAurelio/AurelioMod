@@ -24,7 +24,7 @@
     {
       "name": "category",
       "dataType": ["string"],
-      "description": "Categoría de contenido detectada por WaveSpeed",
+      "description": "Categoría de contenido detectada por el modelo AI",
       "indexFilterable": true
     },
     {

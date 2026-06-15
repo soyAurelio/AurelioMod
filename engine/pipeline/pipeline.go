@@ -1,14 +1,14 @@
-// Package pipeline orchestrates content analysis through the L1→L2→L3→WaveSpeed
+// Package pipeline orchestrates content analysis through the L1→L2→L3→AI analyzer
 // cache hierarchy. Each layer is progressively more expensive but covers more
 // types of matches:
 //
 //	L1: BLAKE3 exact match (<5ms)     → same content was analyzed before
 //	L2: pHash perceptual match (<50ms) → visually similar content found
 //	L3: Weaviate vector search (<200ms) → semantically similar content found
-//	WaveSpeed: AI API (seconds)        → fresh analysis (fallback)
+//	AI analyzer: AI API (seconds)        → fresh analysis (fallback)
 //
-// On cache miss, the pipeline calls WaveSpeed and back-populates all cache layers.
-// After a WaveSpeed decision, integration hooks fire: audit emission, NATS
+// On cache miss, the pipeline calls AI analyzer and back-populates all cache layers.
+// After a AI analyzer decision, integration hooks fire: audit emission, NATS
 // publish, and quarantine update — all fire-and-forget (non-blocking).
 package pipeline
 
@@ -45,19 +45,19 @@ type ContentNormalizer interface {
 type Pipeline interface {
 	// Execute runs the full analysis pipeline on an AnalyzeRequest.
 	// Returns an AnalyzeResponse with the cache level that produced the decision,
-	// or CACHE_LEVEL_NONE if WaveSpeed performed a fresh analysis.
+	// or CACHE_LEVEL_NONE if AI analyzer performed a fresh analysis.
 	Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.AnalyzeResponse, error)
 }
 
-// AuditHook is called after a WaveSpeed decision is produced to emit an
+// AuditHook is called after a AI analyzer decision is produced to emit an
 // immutable audit event. Implementations write to slog, Neon DB, and R2.
 type AuditHook func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64, processingMs int64)
 
-// DecisionHook is called after a WaveSpeed decision to publish the result
+// DecisionHook is called after a AI analyzer decision to publish the result
 // via NATS for Centrifugo → dashboard real-time relay.
 type DecisionHook func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64)
 
-// QuarantineHook is called after a WaveSpeed decision to update the
+// QuarantineHook is called after a AI analyzer decision to update the
 // inverted quarantine state machine (PENDING → BLOCKED | RELEASED).
 type QuarantineHook func(ctx context.Context, contentID, decision, category string, confidence float64)
 
@@ -76,7 +76,7 @@ type URLChecker interface {
 // PipelineOption configures optional pipeline behavior.
 type PipelineOption func(*pipeline)
 
-// WithAuditHook sets the audit emission hook, fired after WaveSpeed decisions.
+// WithAuditHook sets the audit emission hook, fired after AI analyzer decisions.
 func WithAuditHook(h AuditHook) PipelineOption {
 	return func(p *pipeline) { p.auditHook = h }
 }
@@ -135,9 +135,9 @@ type pipeline struct {
 }
 
 // New creates a Pipeline backed by L1/L2 caches, content normalizer,
-// WaveSpeed analyzer, and Weaviate L3 vector search client.
+// AI analyzer analyzer, and Weaviate L3 vector search client.
 //
-// analyzer and weaviateClient may be nil — in that case L3+WaveSpeed
+// analyzer and weaviateClient may be nil — in that case L3+AI analyzer
 // layers are skipped and a QUEUED decision is returned on cache miss.
 //
 // Optional hooks (audit, decision publish, quarantine) can be configured
@@ -164,7 +164,7 @@ func New(
 	return p
 }
 
-// Execute runs the normalization → L1 → L2 → L3 → WaveSpeed cascade.
+// Execute runs the normalization → L1 → L2 → L3 → AI analyzer cascade.
 //
 // When content_type is CONTENT_TYPE_EXTERNAL_URL with a YouTube domain and
 // EXTRACT_FRAMES_ENABLED=true, Execute extracts video frames via the configured
@@ -220,7 +220,7 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 		}
 	}
 
-	// Standard path: normalize → L1 → L2 → L3 → WaveSpeed
+	// Standard path: normalize → L1 → L2 → L3 → AI analyzer
 	//
 	// EXTERNAL_URL without YouTube frame extraction → QUEUED.
 	// URLs need yt-dlp fetch + Web Risk before pixel-level analysis.
@@ -237,7 +237,7 @@ func (p *pipeline) Execute(ctx context.Context, req *v1.AnalyzeRequest) (*v1.Ana
 	return p.executeStandard(ctx, req, start)
 }
 
-// lastChanceRecheck performs a final cache sweep L1→L2→L3 after WaveSpeed
+// lastChanceRecheck performs a final cache sweep L1→L2→L3 after AI analyzer
 // has failed. Another concurrent request may have populated the caches while
 // this request was blocked on the Bulkhead. If any level hits, the cached
 // decision is returned with degraded_confidence set to the cached confidence.
@@ -296,7 +296,7 @@ func (p *pipeline) lastChanceRecheck(ctx context.Context, l1Hash string, ph uint
 	return nil, false
 }
 
-// backPopulate stores the WaveSpeed decision in L1, L2, and L3 caches.
+// backPopulate stores the AI analyzer decision in L1, L2, and L3 caches.
 // Failures are logged as warnings — cache population is best-effort per spec.
 func (p *pipeline) backPopulate(ctx context.Context, l1Hash string, ph uint64, d *cache.CachedDecision) {
 	// L1: BLAKE3 exact match
@@ -327,7 +327,7 @@ func (p *pipeline) backPopulate(ctx context.Context, l1Hash string, ph uint64, d
 	}
 }
 
-// decisionFromBool maps a WaveSpeed boolean flag to a protobuf Decision.
+// decisionFromBool maps a AI analyzer boolean flag to a protobuf Decision.
 func decisionFromBool(flagged bool) v1.Decision {
 	if flagged {
 		return v1.Decision_DECISION_BLOCK
@@ -335,7 +335,7 @@ func decisionFromBool(flagged bool) v1.Decision {
 	return v1.Decision_DECISION_ALLOW
 }
 
-// dominantCategory returns the first flagged category from the WaveSpeed output.
+// dominantCategory returns the first flagged category from the AI analyzer output.
 // If none are flagged, returns "safe".
 func dominantCategory(categories map[string]bool) string {
 	// Priority-ordered category list: more severe first
@@ -448,7 +448,7 @@ func parseTimestampParam(rawURL string) (int, bool) {
 }
 
 // executeFrameExtraction extracts video frames from a YouTube URL and analyzes
-// each frame through the normal pipeline (normalize → L1 → L2 → L3 → WaveSpeed).
+// each frame through the normal pipeline (normalize → L1 → L2 → L3 → AI analyzer).
 // Results are aggregated: the most severe decision across all frames wins,
 // with the highest confidence reported (spec R3.4).
 func (p *pipeline) executeFrameExtraction(
@@ -542,7 +542,7 @@ func (p *pipeline) executeFrameExtraction(
 	}, nil
 }
 
-// executeStandard runs the standard pipeline from normalize through WaveSpeed.
+// executeStandard runs the standard pipeline from normalize through AI analyzer.
 // Extracted as a separate method to be reusable from the frame extraction path.
 func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, start time.Time) (*v1.AnalyzeResponse, error) {
 	tracer := otel.Tracer("pipeline")
@@ -621,7 +621,7 @@ func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, 
 		}, nil
 	}
 
-	// Send normalized JPEG as Base64 data URI — WaveSpeed downloads from URL,
+	// Send normalized JPEG as Base64 data URI — AI analyzer downloads from URL,
 	// but we don't have a public URL until R2/MinIO upload. Base64 data URI
 	// avoids the fake "storage.aureliomod.dev" URL that doesn't resolve.
 	imageURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(normalized.JPEGBytes)

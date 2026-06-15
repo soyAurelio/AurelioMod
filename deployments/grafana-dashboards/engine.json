@@ -26,14 +26,14 @@
       ]
     },
     {
-      "title": "WaveSpeed API Errors",
+      "title": "Inference Errors",
       "type": "graph",
-      "targets": [{ "expr": "rate(wavespeed_errors_total[1m])" }]
+      "targets": [{ "expr": "rate(inference_errors_total[1m])" }]
     },
     {
       "title": "Circuit Breaker State",
       "type": "stat",
-      "targets": [{ "expr": "circuit_breaker_state{breaker='wavespeed'}" }]
+      "targets": [{ "expr": "circuit_breaker_state{breaker='inference-service'}" }]
     },
     {
       "title": "Workspace Quota Usage (top 5)",

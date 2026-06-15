@@ -24,7 +24,7 @@ func TestSlogEmitter_Emit_ValidJSON(t *testing.T) {
 		Decision:       "BLOCK",
 		BlockReason:    "violence_graphic",
 		Category:       "violence_graphic",
-		AnalystVersion: "wavespeed-v3.2",
+		AnalystVersion: "AI moderation-v3.2",
 		GuildID:        "123456789",
 		AuthorID:       "987654321",
 		SourcePlatform: "discord",

@@ -43,7 +43,7 @@ func TestIntegration_EngineAnalyze(t *testing.T) {
 	resp, err := c.Analyze(ctx, req)
 	if err != nil {
 		t.Logf("✓ Edge Discord → Engine ConnectRPC works (got error as expected: %v)", err)
-		// Engine might be down or WaveSpeed 429 — the important thing is the RPC call succeeded.
+		// Engine might be down or AI moderation 429 — the important thing is the RPC call succeeded.
 		if resp == nil {
 			return
 		}

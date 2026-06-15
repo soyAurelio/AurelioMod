@@ -16,7 +16,7 @@ type EngineMetrics struct {
 	analysisDuration metric.Float64Histogram
 	cacheHits        metric.Int64Counter
 	cacheMisses      metric.Int64Counter
-	wavespeedErrors  metric.Int64Counter
+	inferenceErrors  metric.Int64Counter
 }
 
 // NewEngineMetrics creates metric instruments from the global meter.
@@ -52,8 +52,8 @@ func NewEngineMetrics() (*EngineMetrics, error) {
 		return nil, err
 	}
 
-	wavespeedErrors, err := meter.Int64Counter("wavespeed_errors_total",
-		metric.WithDescription("WaveSpeed API error count"),
+	inferenceErrors, err := meter.Int64Counter("inference_errors_total",
+		metric.WithDescription("AI inference error count"),
 	)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func NewEngineMetrics() (*EngineMetrics, error) {
 		analysisDuration: analysisDuration,
 		cacheHits:        cacheHits,
 		cacheMisses:      cacheMisses,
-		wavespeedErrors:  wavespeedErrors,
+		inferenceErrors:  inferenceErrors,
 	}, nil
 }
 
@@ -84,7 +84,7 @@ func (m *EngineMetrics) RecordCacheMiss(ctx context.Context, level string) {
 	m.cacheMisses.Add(ctx, 1, metric.WithAttributes(attribute.String("level", level)))
 }
 
-// RecordWaveSpeedError records a WaveSpeed API error.
-func (m *EngineMetrics) RecordWaveSpeedError(ctx context.Context) {
-	m.wavespeedErrors.Add(ctx, 1)
+// RecordInferenceError records an AI inference error.
+func (m *EngineMetrics) RecordInferenceError(ctx context.Context) {
+	m.inferenceErrors.Add(ctx, 1)
 }

@@ -8,9 +8,10 @@ import (
 	"github.com/failsafe-go/failsafe-go/bulkhead"
 )
 
-func TestWaveSpeedExecutor_BulkheadBlocksConcurrent(t *testing.T) {
-	t.Setenv("WAVESPEED_MAX_CONCURRENT", "1")
-	exec := WaveSpeedExecutor[string]()
+func TestExecutor_BulkheadBlocksConcurrent(t *testing.T) {
+	cfg := DefaultExecutorConfig()
+	cfg.MaxConcurrent = 1
+	exec := NewExecutor[string](cfg)
 
 	// Acquire the single permit and hold it.
 	blocker := make(chan struct{})
@@ -46,9 +47,10 @@ func TestWaveSpeedExecutor_BulkheadBlocksConcurrent(t *testing.T) {
 	}
 }
 
-func TestWaveSpeedExecutor_BulkheadDisabled(t *testing.T) {
-	t.Setenv("WAVESPEED_MAX_CONCURRENT", "0")
-	exec := WaveSpeedExecutor[string]()
+func TestExecutor_BulkheadDisabled(t *testing.T) {
+	cfg := DefaultExecutorConfig()
+	cfg.MaxConcurrent = 0 // disabled
+	exec := NewExecutor[string](cfg)
 
 	// Both sequential calls must succeed when bulkhead is disabled.
 	r1, err1 := exec.Get(func() (string, error) {
@@ -72,9 +74,10 @@ func TestWaveSpeedExecutor_BulkheadDisabled(t *testing.T) {
 	}
 }
 
-func TestWaveSpeedExecutor_BulkheadHigherConcurrency(t *testing.T) {
-	t.Setenv("WAVESPEED_MAX_CONCURRENT", "2")
-	exec := WaveSpeedExecutor[string]()
+func TestExecutor_BulkheadHigherConcurrency(t *testing.T) {
+	cfg := DefaultExecutorConfig()
+	cfg.MaxConcurrent = 2
+	exec := NewExecutor[string](cfg)
 
 	blocker := make(chan struct{})
 	acquired := make(chan struct{}, 2)
@@ -114,12 +117,11 @@ func TestWaveSpeedExecutor_BulkheadHigherConcurrency(t *testing.T) {
 	}
 }
 
-func TestWaveSpeedExecutor_BulkheadInvalidEnv(t *testing.T) {
-	// Non-numeric WAVESPEED_MAX_CONCURRENT is ignored; falls through to default (3).
-	t.Setenv("WAVESPEED_MAX_CONCURRENT", "not-a-number")
-	exec := WaveSpeedExecutor[string]()
+func TestExecutor_BulkheadDefaultEnabled(t *testing.T) {
+	cfg := DefaultExecutorConfig()
+	cfg.MaxConcurrent = 3
+	exec := NewExecutor[string](cfg)
 
-	// With default 3 permits, 3 concurrent calls should succeed.
 	blocker := make(chan struct{})
 	acquired := make(chan struct{}, 3)
 
@@ -137,11 +139,10 @@ func TestWaveSpeedExecutor_BulkheadInvalidEnv(t *testing.T) {
 		select {
 		case <-acquired:
 		case <-time.After(5 * time.Second):
-			t.Fatal("timed out — expected 3 permits from default bronze tier")
+			t.Fatal("timed out — expected 3 permits")
 		}
 	}
 
-	// 4th call must fail — all 3 permits taken.
 	_, err := exec.Get(func() (string, error) {
 		return "fourth", nil
 	})
@@ -152,203 +153,58 @@ func TestWaveSpeedExecutor_BulkheadInvalidEnv(t *testing.T) {
 	}
 }
 
-func TestWaveSpeedExecutor_BulkheadNegativeEnv(t *testing.T) {
-	// Negative WAVESPEED_MAX_CONCURRENT is ignored; falls through to default (3).
-	t.Setenv("WAVESPEED_MAX_CONCURRENT", "-5")
-	exec := WaveSpeedExecutor[string]()
+func TestExecutor_RetrySucceeds(t *testing.T) {
+	cfg := DefaultExecutorConfig()
+	cfg.MaxConcurrent = 0
+	cfg.MaxRetries = 3
+	exec := NewExecutor[string](cfg)
 
-	blocker := make(chan struct{})
-	acquired := make(chan struct{}, 3)
-
-	for range 3 {
-		go func() {
-			_, _ = exec.Get(func() (string, error) {
-				acquired <- struct{}{}
-				<-blocker
-				return "ok", nil
-			})
-		}()
-	}
-
-	for range 3 {
-		select {
-		case <-acquired:
-		case <-time.After(5 * time.Second):
-			t.Fatal("timed out — negative env should default to bronze (3)")
+	attempts := 0
+	result, err := exec.Get(func() (string, error) {
+		attempts++
+		if attempts < 3 {
+			return "", errors.New("transient error")
 		}
-	}
-
-	_, err := exec.Get(func() (string, error) {
-		return "fourth", nil
+		return "success", nil
 	})
-	close(blocker)
 
-	if !errors.Is(err, bulkhead.ErrFull) {
-		t.Errorf("expected bulkhead.ErrFull (defaulted to 3 on negative env), got %v", err)
-	}
-}
-
-func TestWaveSpeedExecutor_BulkheadDefaultEnabled(t *testing.T) {
-	// Default: when no env vars are set, bulkhead(3) is active (bronze tier).
-	exec := WaveSpeedExecutor[string]()
-
-	blocker := make(chan struct{})
-	acquired := make(chan struct{}, 3)
-
-	for range 3 {
-		go func() {
-			_, _ = exec.Get(func() (string, error) {
-				acquired <- struct{}{}
-				<-blocker
-				return "ok", nil
-			})
-		}()
-	}
-
-	for range 3 {
-		select {
-		case <-acquired:
-		case <-time.After(5 * time.Second):
-			t.Fatal("timed out — default should be 3 permits (bronze)")
-		}
-	}
-
-	_, err := exec.Get(func() (string, error) {
-		return "fourth", nil
-	})
-	close(blocker)
-
-	if !errors.Is(err, bulkhead.ErrFull) {
-		t.Errorf("expected bulkhead.ErrFull (3 permits taken, bronze default), got %v", err)
-	}
-}
-
-func TestWaveSpeedExecutor_PlanSilver(t *testing.T) {
-	// WAVESPEED_PLAN=silver → 100 concurrent (no Bulkhead rejection at scale).
-	t.Setenv("WAVESPEED_PLAN", "silver")
-	exec := WaveSpeedExecutor[string]()
-
-	// Verify 2 concurrent calls succeed without blocking.
-	blocker := make(chan struct{})
-	acquired := make(chan struct{}, 2)
-
-	for range 2 {
-		go func() {
-			_, _ = exec.Get(func() (string, error) {
-				acquired <- struct{}{}
-				<-blocker
-				return "ok", nil
-			})
-		}()
-	}
-
-	for range 2 {
-		select {
-		case <-acquired:
-		case <-time.After(5 * time.Second):
-			t.Fatal("timed out — silver plan should allow 100 concurrent")
-		}
-	}
-
-	close(blocker)
-}
-
-func TestWaveSpeedExecutor_PlanGold(t *testing.T) {
-	// WAVESPEED_PLAN=gold → 2000 concurrent.
-	t.Setenv("WAVESPEED_PLAN", "gold")
-	exec := WaveSpeedExecutor[string]()
-
-	_, err := exec.Get(func() (string, error) {
-		return "ok", nil
-	})
 	if err != nil {
-		t.Errorf("gold plan should allow concurrent calls, got: %v", err)
+		t.Fatalf("expected success after retries, got: %v", err)
+	}
+	if result != "success" {
+		t.Errorf("expected 'success', got %q", result)
+	}
+	if attempts != 3 {
+		t.Errorf("expected 3 attempts, got %d", attempts)
 	}
 }
 
-func TestWaveSpeedExecutor_PlanOverride(t *testing.T) {
-	// WAVESPEED_MAX_CONCURRENT overrides WAVESPEED_PLAN.
-	t.Setenv("WAVESPEED_PLAN", "gold")        // would be 2000
-	t.Setenv("WAVESPEED_MAX_CONCURRENT", "5") // overrides to 5
-	exec := WaveSpeedExecutor[string]()
+func TestExecutor_CircuitBreakerOpens(t *testing.T) {
+	cfg := DefaultExecutorConfig()
+	cfg.MaxConcurrent = 0
+	cfg.CBFailureThreshold = 3
+	cfg.CBDelay = 2 * time.Second // long enough to stay open across test
+	exec := NewExecutor[string](cfg)
 
-	blocker := make(chan struct{})
-	acquired := make(chan struct{}, 5)
+	fail := errors.New("api error")
 
-	for range 5 {
-		go func() {
-			_, _ = exec.Get(func() (string, error) {
-				acquired <- struct{}{}
-				<-blocker
-				return "ok", nil
-			})
-		}()
-	}
-
-	for range 5 {
-		select {
-		case <-acquired:
-		case <-time.After(5 * time.Second):
-			t.Fatal("timed out — explicit override should give 5 permits")
-		}
-	}
-
-	// 6th call must fail — explicit override is 5.
-	_, err := exec.Get(func() (string, error) {
-		return "sixth", nil
-	})
-	close(blocker)
-
-	if !errors.Is(err, bulkhead.ErrFull) {
-		t.Errorf("expected bulkhead.ErrFull (override=5 permits taken), got %v", err)
-	}
-}
-
-func TestWaveSpeedExecutor_PlanUnknown(t *testing.T) {
-	// Unknown plan falls through to default (3).
-	t.Setenv("WAVESPEED_PLAN", "enterprise")
-	exec := WaveSpeedExecutor[string]()
-
-	blocker := make(chan struct{})
-	acquired := make(chan struct{}, 3)
-
+	// Trip the breaker: 3 consecutive failures.
 	for range 3 {
-		go func() {
-			_, _ = exec.Get(func() (string, error) {
-				acquired <- struct{}{}
-				<-blocker
-				return "ok", nil
-			})
-		}()
+		_, _ = exec.Get(func() (string, error) {
+			return "", fail
+		})
 	}
 
-	for range 3 {
-		select {
-		case <-acquired:
-		case <-time.After(5 * time.Second):
-			t.Fatal("timed out — unknown plan should default to bronze (3)")
-		}
-	}
-
+	// 4th call: circuit should be open now. Fallback returns error.
 	_, err := exec.Get(func() (string, error) {
-		return "fourth", nil
+		return "should not reach", nil
 	})
-	close(blocker)
-
-	if !errors.Is(err, bulkhead.ErrFull) {
-		t.Errorf("expected bulkhead.ErrFull (unknown plan defaults to 3), got %v", err)
+	if err == nil {
+		t.Fatal("expected circuit breaker to be open, got nil error")
 	}
-}
-
-func TestWaveSpeedExecutor_PlanCaseInsensitive(t *testing.T) {
-	// Plan names are case-insensitive.
-	t.Setenv("WAVESPEED_PLAN", "SILVER")
-	exec := WaveSpeedExecutor[string]()
-
-	_, err := exec.Get(func() (string, error) {
-		return "ok", nil
-	})
-	if err != nil {
-		t.Errorf("SILVER plan should work case-insensitively, got: %v", err)
+	// Verify the inner function was NOT called (circuit blocked execution).
+	// The error from the fallback wraps the circuit breaker error.
+	if err.Error() == "api error" {
+		t.Error("expected circuit breaker error, but got the inner function's error — circuit may have let execution through")
 	}
 }

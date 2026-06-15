@@ -7,7 +7,7 @@
 //	PENDING → ANALYZING → BLOCKED | RELEASED
 //
 // Content starts in PENDING (blocked immediately upon arrival). The Engine
-// pipeline runs, and when WaveSpeed returns a decision:
+// pipeline runs, and when AI moderation returns a decision:
 //   - BLOCKED → content stays quarantined
 //   - ALLOWED → content is released
 //

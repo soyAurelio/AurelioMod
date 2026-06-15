@@ -107,7 +107,7 @@ func Register(r handler.Router, analysisClient client.AnalysisClient, limiter ra
 }
 
 // moderateHandler returns a SlashCommandHandler for /moderate <url>.
-// Downloads CDN attachments as binary images for proper WaveSpeed analysis.
+// Downloads CDN attachments as binary images for proper AI moderation analysis.
 // Uses deferred response to avoid Discord's 3-second interaction timeout.
 // All responses are ephemeral (only visible to the invoking user).
 func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, logger *slog.Logger) handler.SlashCommandHandler {
@@ -208,7 +208,7 @@ func statusHandler(analysisClient client.AnalysisClient, limiter ratelimit.Limit
 
 // checkEngineHealth probes Engine connectivity with a TCP dial.
 // Returns true if Engine is reachable (TCP handshake succeeds).
-// This is independent of WaveSpeed rate limiting — we only check
+// This is independent of AI moderation rate limiting — we only check
 // that the service is listening.
 func checkEngineHealth(ctx context.Context, analysisClient client.AnalysisClient, logger *slog.Logger) bool {
 	engineURL := os.Getenv("ENGINE_URL")

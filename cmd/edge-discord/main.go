@@ -264,7 +264,7 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 	// Gate: ATTACHMENT_ANALYSIS_ENABLED controls whether the bot downloads
 	// binary attachments from Discord CDN. When disabled (default: false),
 	// only message text URLs are processed. Enables staging/testing without
-	// consuming WaveSpeed credits for image analysis.
+	// consuming AI moderation credits for image analysis.
 	if os.Getenv("ATTACHMENT_ANALYSIS_ENABLED") == "true" {
 		// Check for attachment binary download first (regular + embed + forwarded)
 		var urlsToTry []string

@@ -201,9 +201,7 @@ services:
     ports:
       - "9090:8080"
     environment:
-      WAVESPEED_API_KEY: "${WAVESPEED_API_KEY:-}"
-      WAVESPEED_PLAN: "${WAVESPEED_PLAN:-bronze}"
-      # WAVESPEED_MAX_CONCURRENT overrides WAVESPEED_PLAN if set
+      INFERENCE_ADDR: "${INFERENCE_ADDR:-}"
       DRAGONFLY_ADDR: "dragonfly:6379"
       NATS_URL: "nats://nats:4222"
       NATS_NKEY_SEED: "${NATS_NKEY_SEED}"

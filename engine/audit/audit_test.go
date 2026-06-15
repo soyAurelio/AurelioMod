@@ -51,7 +51,7 @@ func TestAuditEvent_HasAllFields(t *testing.T) {
 		Decision:              "blocked",
 		Confidence:            0.94,
 		Category:              "violence_graphic",
-		AnalystVersion:        "wavespeed-v3.2",
+		AnalystVersion:        "AI moderation-v3.2",
 		NormalizationPipeline: "480p+strip_exif+jpeg_q85",
 		ProcessingMs:          142,
 		TimestampUTC:          ts,

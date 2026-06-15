@@ -27,7 +27,7 @@ const (
 	Decision_DECISION_UNSPECIFIED Decision = 0
 	Decision_DECISION_ALLOW       Decision = 1
 	Decision_DECISION_BLOCK       Decision = 2
-	Decision_DECISION_QUEUED      Decision = 3 // Pending WaveSpeed analysis
+	Decision_DECISION_QUEUED      Decision = 3 // Pending AI moderation analysis
 	Decision_DECISION_ERROR       Decision = 4 // Analysis failed; fallback to cached or block
 )
 
@@ -348,10 +348,10 @@ type AnalyzeResponse struct {
 	CacheLevel CacheLevel `protobuf:"varint,6,opt,name=cache_level,json=cacheLevel,proto3,enum=aureliomod.v1.CacheLevel" json:"cache_level,omitempty"`
 	// processing_ms is the total processing time in milliseconds.
 	ProcessingMs int64 `protobuf:"varint,7,opt,name=processing_ms,json=processingMs,proto3" json:"processing_ms,omitempty"`
-	// analyst_version is the WaveSpeed model version used (for audit).
+	// analyst_version is the AI moderation model version used (for audit).
 	AnalystVersion string `protobuf:"bytes,8,opt,name=analyst_version,json=analystVersion,proto3" json:"analyst_version,omitempty"`
 	// degraded_confidence is set when the decision was made via degraded
-	// fallback (WaveSpeed unavailable → cache re-check). 0.0 to 1.0.
+	// fallback (AI moderation unavailable → cache re-check). 0.0 to 1.0.
 	// Zero means "no degradation" (normal path).
 	DegradedConfidence float64 `protobuf:"fixed64,9,opt,name=degraded_confidence,json=degradedConfidence,proto3" json:"degraded_confidence,omitempty"`
 	unknownFields      protoimpl.UnknownFields

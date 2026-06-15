@@ -39,7 +39,7 @@ type AuditEvent struct {
 	// Category is the classification category (e.g., "violence_graphic").
 	Category string `json:"category,omitempty"`
 
-	// AnalystVersion identifies the WaveSpeed model version used.
+	// AnalystVersion identifies the AI moderation model version used.
 	AnalystVersion string `json:"analyst_version,omitempty"`
 
 	// GuildID is the Discord guild (server) ID where the message was posted.

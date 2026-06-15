@@ -36,7 +36,7 @@ func TestClient_Analyze_Success(t *testing.T) {
 		Confidence:     0.95,
 		ContentHash:    "b3:abc123",
 		ProcessingMs:   42,
-		AnalystVersion: "wavespeed-v3.2",
+		AnalystVersion: "AI moderation-v3.2",
 	}
 
 	stub := &stubRPCClient{

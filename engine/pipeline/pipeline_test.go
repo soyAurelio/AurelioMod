@@ -113,7 +113,7 @@ func cachedAllow() *cache.CachedDecision {
 }
 
 // newTestPipeline creates a pipeline with mock caches and test pixel data.
-// Analyzer and WeaviateClient are nil (L3+WaveSpeed layers skipped).
+// Analyzer and WeaviateClient are nil (L3+AI model layers skipped).
 func newTestPipeline(l1 *mockL1Cache, l2 *mockL2Cache) Pipeline {
 	return New(l1, l2, &mockNormalizer{pixels: testPixels()}, nil, nil)
 }
@@ -217,7 +217,7 @@ func TestPipeline_L1Miss_L2Miss(t *testing.T) {
 		t.Errorf("CacheLevel = %v, want NONE", resp.CacheLevel)
 	}
 	if resp.Decision != v1.Decision_DECISION_QUEUED {
-		t.Errorf("Decision = %v, want QUEUED (pending WaveSpeed)", resp.Decision)
+		t.Errorf("Decision = %v, want QUEUED (pending AI model)", resp.Decision)
 	}
 	if resp.ContentHash != blake3Hash {
 		t.Errorf("ContentHash = %q, want %q", resp.ContentHash, blake3Hash)
@@ -351,7 +351,7 @@ func TestPipeline_Timeout(t *testing.T) {
 	})
 }
 
-// --- L3 + WaveSpeed mock implementations ---
+// --- L3 + AI model mock implementations ---
 
 // mockAnalyzer implements analyzer.Analyzer for pipeline testing.
 type mockAnalyzer struct {
@@ -390,12 +390,12 @@ func (m *mockWvClient) IndexDecision(_ context.Context, contentHash string, vect
 	return nil
 }
 
-// newFullPipeline creates a pipeline with all 5 dependencies for L3/WaveSpeed tests.
+// newFullPipeline creates a pipeline with all 5 dependencies for L3/AI model tests.
 func newFullPipeline(l1 *mockL1Cache, l2 *mockL2Cache, a *mockAnalyzer, wv *mockWvClient) Pipeline {
 	return New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
 }
 
-// --- L3 + WaveSpeed tests ---
+// --- L3 + AI model tests ---
 
 // TestPipeline_L3Hit tests: L1 miss → L2 miss → L3 hit from Weaviate.
 func TestPipeline_L3Hit(t *testing.T) {
@@ -428,8 +428,8 @@ func TestPipeline_L3Hit(t *testing.T) {
 	}
 }
 
-// TestPipeline_L3Miss_WaveSpeed_Hit tests: L1+L2+L3 all miss → WaveSpeed returns decision.
-func TestPipeline_L3Miss_WaveSpeed_Hit(t *testing.T) {
+// TestPipeline_L3Miss_AI model_Hit tests: L1+L2+L3 all miss → AI model returns decision.
+func TestPipeline_L3Miss_AnalyzerHit(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
@@ -454,7 +454,7 @@ func TestPipeline_L3Miss_WaveSpeed_Hit(t *testing.T) {
 	}
 
 	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
-		t.Errorf("CacheLevel = %v, want NONE (WaveSpeed fresh analysis)", resp.CacheLevel)
+		t.Errorf("CacheLevel = %v, want NONE (AI model fresh analysis)", resp.CacheLevel)
 	}
 	if resp.Decision != v1.Decision_DECISION_BLOCK {
 		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
@@ -467,9 +467,9 @@ func TestPipeline_L3Miss_WaveSpeed_Hit(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeed_CleanDecision verifies WaveSpeed "clean" result
+// TestPipeline_AI model_CleanDecision verifies AI model "clean" result
 // is stored in all caches (L1, L2, L3 back-population).
-func TestPipeline_WaveSpeed_CleanDecision(t *testing.T) {
+func TestPipeline_AnalyzerCleanDecision(t *testing.T) {
 	setL1Called := false
 	setL2Called := false
 
@@ -519,16 +519,16 @@ func TestPipeline_WaveSpeed_CleanDecision(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeedError_CircuitBreakerOpen tests: WaveSpeed error
+// TestPipeline_AI modelError_CircuitBreakerOpen tests: AI model error
 // → last-chance recheck all miss → DECISION_ERROR with degraded_confidence=0.
-func TestPipeline_WaveSpeedError_CircuitBreakerOpen(t *testing.T) {
+func TestPipeline_AnalyzerErrorCircuitBreakerOpen(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
 	l2 := &mockL2Cache{decisions: nil}                                // miss
 	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
 	a := &mockAnalyzer{
-		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
+		err: errors.New("circuit breaker open: AI model unavailable"),
 	}
 	p := newFullPipeline(l1, l2, a, wv)
 
@@ -554,9 +554,9 @@ func TestPipeline_WaveSpeedError_CircuitBreakerOpen(t *testing.T) {
 	}
 }
 
-// TestPipeline_L3Unavailable_SkipToWaveSpeed tests: Weaviate unavailable →
-// skip L3, go directly to WaveSpeed.
-func TestPipeline_L3Unavailable_SkipToWaveSpeed(t *testing.T) {
+// TestPipeline_L3Unavailable_SkipToAI model tests: Weaviate unavailable →
+// skip L3, go directly to AI model.
+func TestPipeline_L3UnavailableSkipToAnalyzer(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
@@ -582,9 +582,9 @@ func TestPipeline_L3Unavailable_SkipToWaveSpeed(t *testing.T) {
 		t.Fatalf("Execute should succeed even with L3 down, got: %v", err)
 	}
 
-	// Should fall through L3 to WaveSpeed
+	// Should fall through L3 to AI model
 	if resp.CacheLevel != v1.CacheLevel_CACHE_LEVEL_NONE {
-		t.Errorf("CacheLevel = %v, want NONE (WaveSpeed after L3 unavailable)", resp.CacheLevel)
+		t.Errorf("CacheLevel = %v, want NONE (AI model after L3 unavailable)", resp.CacheLevel)
 	}
 	if resp.Decision != v1.Decision_DECISION_BLOCK {
 		t.Errorf("Decision = %v, want BLOCK", resp.Decision)
@@ -682,9 +682,9 @@ func newFullPipelineWithHooks(
 
 // --- integration hook tests ---
 
-// TestPipeline_AuditEmissionOnWaveSpeed verifies that after WaveSpeed returns
+// TestPipeline_AuditEmissionOnAI model verifies that after AI model returns
 // a decision, an audit event is emitted.
-func TestPipeline_AuditEmissionOnWaveSpeed(t *testing.T) {
+func TestPipeline_AuditEmissionOnAnalyzer(t *testing.T) {
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // miss
 	l2 := &mockL2Cache{decisions: nil}                                // miss
 	wv := &mockWvClient{cachedDecision: nil}                          // L3 miss
@@ -712,13 +712,13 @@ func TestPipeline_AuditEmissionOnWaveSpeed(t *testing.T) {
 	// Hooks are fire-and-forget — wait briefly for goroutines
 	time.Sleep(50 * time.Millisecond)
 	if hooks.count() == 0 {
-		t.Error("Expected audit event to be emitted after WaveSpeed decision")
+		t.Error("Expected audit event to be emitted after AI model decision")
 	}
 }
 
-// TestPipeline_DecisionPublishedOnWaveSpeed verifies that after WaveSpeed
+// TestPipeline_DecisionPublishedOnAI model verifies that after AI model
 // returns a decision, it is published via the DecisionPublisher.
-func TestPipeline_DecisionPublishedOnWaveSpeed(t *testing.T) {
+func TestPipeline_DecisionPublishedOnAnalyzer(t *testing.T) {
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
 	l2 := &mockL2Cache{decisions: nil}
 	wv := &mockWvClient{cachedDecision: nil}
@@ -749,9 +749,9 @@ func TestPipeline_DecisionPublishedOnWaveSpeed(t *testing.T) {
 	}
 }
 
-// TestPipeline_QuarantineUpdatedOnWaveSpeed verifies that after WaveSpeed
+// TestPipeline_QuarantineUpdatedOnAI model verifies that after AI model
 // returns a decision, the quarantine status is updated.
-func TestPipeline_QuarantineUpdatedOnWaveSpeed(t *testing.T) {
+func TestPipeline_QuarantineUpdatedOnAnalyzer(t *testing.T) {
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
 	l2 := &mockL2Cache{decisions: nil}
 	wv := &mockWvClient{cachedDecision: nil}
@@ -783,7 +783,7 @@ func TestPipeline_QuarantineUpdatedOnWaveSpeed(t *testing.T) {
 }
 
 // TestPipeline_AllThreeHooksFired verifies that audit, NATS, and quarantine
-// hooks are all fired on a WaveSpeed decision.
+// hooks are all fired on a AI model decision.
 func TestPipeline_AllThreeHooksFired(t *testing.T) {
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
 	l2 := &mockL2Cache{decisions: nil}
@@ -813,7 +813,7 @@ func TestPipeline_AllThreeHooksFired(t *testing.T) {
 
 	// With all 3 hooks configured, we expect 3 calls
 	if hooks.count() < 1 {
-		t.Error("Expected hooks to fire after WaveSpeed decision")
+		t.Error("Expected hooks to fire after AI model decision")
 	}
 }
 
@@ -974,12 +974,12 @@ func (m *missThenHitWv) IndexDecision(_ context.Context, _ string, _ []float32, 
 	return nil
 }
 
-// --- graceful degradation: WaveSpeed error → lastChanceRecheck ---
+// --- graceful degradation: AI model error → lastChanceRecheck ---
 
-// TestPipeline_WaveSpeedError_L1LastChanceHit verifies that when WaveSpeed
+// TestPipeline_AI modelError_L1LastChanceHit verifies that when AI model
 // errors AND L1 cache was populated (by a concurrent request) during the wait,
 // the last-chance recheck returns the cached decision with degraded_confidence.
-func TestPipeline_WaveSpeedError_L1LastChanceHit(t *testing.T) {
+func TestPipeline_AnalyzerErrorL1LastChanceHit(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &missThenHitL1{decisions: map[string]*cache.CachedDecision{
@@ -988,7 +988,7 @@ func TestPipeline_WaveSpeedError_L1LastChanceHit(t *testing.T) {
 	l2 := &mockL2Cache{decisions: nil}
 	wv := &mockWvClient{cachedDecision: nil}
 	a := &mockAnalyzer{
-		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
+		err: errors.New("circuit breaker open: AI model unavailable"),
 	}
 	p := New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
 
@@ -1014,9 +1014,9 @@ func TestPipeline_WaveSpeedError_L1LastChanceHit(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeedError_L2LastChanceHit verifies L2 hit during last-chance
-// recheck after WaveSpeed failure.
-func TestPipeline_WaveSpeedError_L2LastChanceHit(t *testing.T) {
+// TestPipeline_AI modelError_L2LastChanceHit verifies L2 hit during last-chance
+// recheck after AI model failure.
+func TestPipeline_AnalyzerErrorL2LastChanceHit(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss both times
@@ -1049,16 +1049,16 @@ func TestPipeline_WaveSpeedError_L2LastChanceHit(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeedError_L3LastChanceHit verifies L3 hit during last-chance
-// recheck after WaveSpeed failure.
-func TestPipeline_WaveSpeedError_L3LastChanceHit(t *testing.T) {
+// TestPipeline_AI modelError_L3LastChanceHit verifies L3 hit during last-chance
+// recheck after AI model failure.
+func TestPipeline_AnalyzerErrorL3LastChanceHit(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss
 	l2 := &mockL2Cache{decisions: nil}                                // L2 miss
 	wv := &missThenHitWv{cachedDecision: cachedBlock()}               // L3 miss first, hit second
 	a := &mockAnalyzer{
-		err: errors.New("circuit breaker open: WaveSpeed unavailable"),
+		err: errors.New("circuit breaker open: AI model unavailable"),
 	}
 	p := New(l1, l2, &mockNormalizer{pixels: testPixels()}, a, wv)
 
@@ -1084,10 +1084,10 @@ func TestPipeline_WaveSpeedError_L3LastChanceHit(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeedError_AllCachesMiss verifies that when WaveSpeed errors
+// TestPipeline_AI modelError_AllCachesMiss verifies that when AI model errors
 // and ALL caches miss on last-chance recheck, the pipeline returns
 // DECISION_ERROR with DegradedConfidence=0.
-func TestPipeline_WaveSpeedError_AllCachesMiss(t *testing.T) {
+func TestPipeline_AnalyzerErrorAllCachesMiss(t *testing.T) {
 	blake3Hash := precomputeHash()
 
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}} // L1 miss
@@ -1120,9 +1120,9 @@ func TestPipeline_WaveSpeedError_AllCachesMiss(t *testing.T) {
 	}
 }
 
-// TestPipeline_WaveSpeedSuccess_NoDegradedConfidence verifies that a normal
-// successful WaveSpeed call does NOT set degraded_confidence.
-func TestPipeline_WaveSpeedSuccess_NoDegradedConfidence(t *testing.T) {
+// TestPipeline_AI modelSuccess_NoDegradedConfidence verifies that a normal
+// successful AI model call does NOT set degraded_confidence.
+func TestPipeline_AnalyzerSuccessNoDegradedConfidence(t *testing.T) {
 	l1 := &mockL1Cache{decisions: map[string]*cache.CachedDecision{}}
 	l2 := &mockL2Cache{decisions: nil}
 	wv := &mockWvClient{cachedDecision: nil}
@@ -1145,7 +1145,7 @@ func TestPipeline_WaveSpeedSuccess_NoDegradedConfidence(t *testing.T) {
 	}
 
 	if resp.DegradedConfidence != 0 {
-		t.Errorf("DegradedConfidence = %f, want 0 (WaveSpeed succeeded, no degradation)", resp.DegradedConfidence)
+		t.Errorf("DegradedConfidence = %f, want 0 (AI model succeeded, no degradation)", resp.DegradedConfidence)
 	}
 }
 
@@ -1186,7 +1186,7 @@ func TestPipeline_Deadline_NormalizeExpired(t *testing.T) {
 }
 
 // slowAnalyzer blocks until the context is cancelled, simulating a
-// slow WaveSpeed API call that respects context deadlines.
+// slow AI model API call that respects context deadlines.
 type slowAnalyzer struct{}
 
 var _ analyzer.Analyzer = (*slowAnalyzer)(nil)
@@ -1196,10 +1196,10 @@ func (s *slowAnalyzer) Analyze(ctx context.Context, _, _ string) (*analyzer.Mode
 	return nil, ctx.Err()
 }
 
-// TestPipeline_Deadline_WaveSpeedExpired verifies that when L1 and L2 miss
-// and the WaveSpeed call times out (context deadline exceeded), the pipeline
+// TestPipeline_Deadline_AI modelExpired verifies that when L1 and L2 miss
+// and the AI model call times out (context deadline exceeded), the pipeline
 // gracefully degrades: last-chance recheck → DECISION_ERROR with zero confidence.
-func TestPipeline_Deadline_WaveSpeedExpired(t *testing.T) {
+func TestPipeline_DeadlineAnalyzerExpired(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		blake3Hash := precomputeHash()
 

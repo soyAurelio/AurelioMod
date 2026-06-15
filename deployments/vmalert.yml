@@ -13,14 +13,14 @@ groups:
           summary: "Engine service is DOWN"
           description: "Engine has been unreachable for 1 minute. No content analysis possible."
 
-      # WaveSpeed API errors — > 5 errors in 5min
-      - alert: WaveSpeedHighErrors
-        expr: rate(wavespeed_errors_total[5m]) > 5
+      # Inference errors — > 5 errors in 5min
+      - alert: InferenceHighErrors
+        expr: rate(inference_errors_total[5m]) > 5
         for: 5m
         labels: { severity: warning }
         annotations:
-          summary: "High WaveSpeed API error rate"
-          description: "WaveSpeed errors: {{ $value }}/s. Check API key and circuit breaker state."
+          summary: "High inference error rate"
+          description: "Inference errors: {{ $value }}/s. Check Inference Service and Triton."
 
       # High latency — p99 > 5s
       - alert: HighLatency

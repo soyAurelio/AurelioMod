@@ -41,7 +41,7 @@ type AuditEvent struct {
 	Category string `json:"category"`
 
 	// AnalystVersion identifies the model version that produced the decision
-	// (e.g., "wavespeed-v3.2"). Required for AI Act Art. 52 compliance.
+	// (e.g., "AI moderation-v3.2"). Required for AI Act Art. 52 compliance.
 	AnalystVersion string `json:"analyst_version"`
 
 	// NormalizationPipeline describes the content normalization steps applied

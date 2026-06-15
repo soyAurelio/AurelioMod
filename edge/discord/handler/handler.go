@@ -90,7 +90,7 @@ func (h *Handler) EnforceDecision(ctx context.Context, msg *discord.Message, dec
 		return nil
 	case aureliomodv1.Decision_DECISION_QUEUED:
 		// Content pending analysis — don't block yet, don't DM.
-		// The user will be notified if WaveSpeed later determines it's harmful.
+		// The user will be notified if AI moderation later determines it's harmful.
 		return nil
 	default:
 		// Unknown decisions: log and skip (don't block by default).
