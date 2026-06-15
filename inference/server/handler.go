@@ -1,5 +1,7 @@
 // ConnectRPC handler for the Inference Service.
-// Implements aureliomod.v1.InferenceServiceHandler.
+// Two-phase inference:
+//   1. Startup: cache text embeddings (input_ids → Triton → text_embeds)
+//   2. Hot path: image → Triton → image_embeds, compute cosine sim in Go
 
 package server
 
@@ -19,18 +21,17 @@ import (
 	"github.com/soyAurelio/AurelioMod/inference/classifier"
 )
 
-// InferenceServer implements the InferenceService ConnectRPC handler.
 type InferenceServer struct {
 	config     *inference.Config
 	triton     *inference.TritonClient
-	inputIDs   [][]int64 // pre-computed, padded
+	inputIDs   [][]int64
 	categories []classifier.Category
 
-	mu       sync.RWMutex
-	loadedAt time.Time
+	mu         sync.RWMutex
+	textEmbeds [][]float32
+	loadedAt   time.Time
 }
 
-// New creates a new InferenceServer with the given configuration.
 func New(cfg *inference.Config) (*InferenceServer, error) {
 	ids, _ := cfg.Classifier.FlattenInputIDs()
 
@@ -56,10 +57,46 @@ func New(cfg *inference.Config) (*InferenceServer, error) {
 		loadedAt:   time.Now(),
 	}
 
+	if err := srv.computeTextEmbeds(context.Background()); err != nil {
+		return nil, fmt.Errorf("compute text embeddings: %w", err)
+	}
+
 	return srv, nil
 }
 
-// Reload re-reads the config file (called on SIGHUP).
+func (s *InferenceServer) computeTextEmbeds(ctx context.Context) error {
+	nPrompts := len(s.inputIDs)
+
+	zeroPV := make([][][][]float32, nPrompts)
+	for i := range zeroPV {
+		pv := make([][][]float32, 3)
+		for c := 0; c < 3; c++ {
+			pv[c] = make([][]float32, 512)
+			for y := 0; y < 512; y++ {
+				pv[c][y] = make([]float32, 512)
+			}
+		}
+		zeroPV[i] = pv
+	}
+
+	textEmbeds, err := s.triton.InferTextEmbeds(ctx, s.inputIDs, zeroPV)
+	if err != nil {
+		return fmt.Errorf("triton text embeds: %w", err)
+	}
+
+	if len(textEmbeds) != nPrompts*1152 {
+		return fmt.Errorf("expected %d values, got %d", nPrompts*1152, len(textEmbeds))
+	}
+
+	embeds := make([][]float32, nPrompts)
+	for i := range embeds {
+		embeds[i] = textEmbeds[i*1152 : (i+1)*1152]
+	}
+
+	s.textEmbeds = embeds
+	return nil
+}
+
 func (s *InferenceServer) Reload(path string) error {
 	cfg, err := inference.LoadConfig(path)
 	if err != nil {
@@ -88,10 +125,10 @@ func (s *InferenceServer) Reload(path string) error {
 	s.inputIDs = ids
 	s.categories = cats
 	s.loadedAt = time.Now()
-	return nil
+
+	return s.computeTextEmbeds(context.Background())
 }
 
-// Classify runs zero-shot classification on image(s).
 func (s *InferenceServer) Classify(
 	ctx context.Context,
 	req *connect.Request[v1.ClassifyRequest],
@@ -104,53 +141,61 @@ func (s *InferenceServer) Classify(
 	case *v1.ClassifyRequest_Image:
 		pv, err := decodeJPEG(content.Image.JpegData)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument,
-				fmt.Errorf("decode image: %w", err))
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("decode image: %w", err))
 		}
 		pixelValues = [][][][]float32{pv}
 	case *v1.ClassifyRequest_Video:
 		if len(content.Video.Frames) == 0 {
-			return nil, connect.NewError(connect.CodeInvalidArgument,
-				fmt.Errorf("video has no frames"))
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("video has no frames"))
 		}
 		for _, frame := range content.Video.Frames {
 			pv, err := decodeJPEG(frame)
 			if err != nil {
-				return nil, connect.NewError(connect.CodeInvalidArgument,
-					fmt.Errorf("decode frame: %w", err))
+				return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("decode frame: %w", err))
 			}
 			pixelValues = append(pixelValues, pv)
 		}
 	default:
-		return nil, connect.NewError(connect.CodeInvalidArgument,
-			fmt.Errorf("no content provided"))
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("no content provided"))
+	}
+
+	nImages := len(pixelValues)
+	seqLen := len(s.inputIDs[0])
+	zeroIDs := make([][]int64, nImages)
+	for i := range zeroIDs {
+		zeroIDs[i] = make([]int64, seqLen)
 	}
 
 	s.mu.RLock()
-	inputIDs := s.inputIDs
+	textEmbeds := s.textEmbeds
 	cats := s.categories
+	cfg := s.config
 	s.mu.RUnlock()
 
-	// Send to Triton: input_ids (all prompts) + pixel_values (images)
-	logits, err := s.triton.Infer(ctx, inputIDs, pixelValues)
+	imageEmbedsFlat, err := s.triton.InferImageEmbeds(ctx, zeroIDs, pixelValues)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("triton inference: %w", err))
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("triton image embeds: %w", err))
 	}
 
-	// Classify: sigmoid + thresholding per image, max aggregation
-	nImages := len(pixelValues)
-	nPromptsTotal := 0
-	for _, c := range cats {
-		nPromptsTotal += c.NumPrompts
+	imageEmbeds := make([][]float32, nImages)
+	for i := range imageEmbeds {
+		imageEmbeds[i] = imageEmbedsFlat[i*1152 : (i+1)*1152]
 	}
 
-	// logits shape: [nImages, nPromptsTotal]
-	// Aggregate max score across all images for each category
+	logitScale := float32(cfg.Classifier.LogitScale)
+	logitBias := float32(cfg.Classifier.LogitBias)
+
 	aggScores := make(map[string]float32)
-	for i := 0; i < nImages; i++ {
-		imgLogits := logits[i*nPromptsTotal : (i+1)*nPromptsTotal]
-		result := classifier.Classify(imgLogits, cats)
+
+	for _, imgEmb := range imageEmbeds {
+		nPrompts := len(textEmbeds)
+		logits := make([]float32, nPrompts)
+		for j := 0; j < nPrompts; j++ {
+			cosSim := cosineSimilarity(imgEmb, textEmbeds[j])
+			logits[j] = logitScale*cosSim + logitBias
+		}
+
+		result := classifier.Classify(logits, cats)
 		for cat, score := range result.Scores {
 			if float32(score) > aggScores[cat] {
 				aggScores[cat] = float32(score)
@@ -158,7 +203,6 @@ func (s *InferenceServer) Classify(
 		}
 	}
 
-	// Determine top category and triggered
 	topCat := ""
 	topScore := 0.0
 	var triggered []string
@@ -185,7 +229,6 @@ func (s *InferenceServer) Classify(
 		ModelVersion: s.config.Model.Instance.Version,
 	}
 
-	// Propagate partial_scan flag for video
 	if video, ok := req.Msg.Content.(*v1.ClassifyRequest_Video); ok {
 		resp.IsPartialScan = video.Video.IsPartialScan
 	}
@@ -193,15 +236,13 @@ func (s *InferenceServer) Classify(
 	return connect.NewResponse(resp), nil
 }
 
-// Health checks Triton readiness and returns model info.
 func (s *InferenceServer) Health(
 	ctx context.Context,
 	req *connect.Request[v1.HealthRequest],
 ) (*connect.Response[v1.HealthResponse], error) {
 	ready, err := s.triton.Health(ctx)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("triton health: %w", err))
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("triton health: %w", err))
 	}
 
 	s.mu.RLock()
@@ -213,12 +254,26 @@ func (s *InferenceServer) Health(
 		Ready:        ready,
 		ModelVersion: version,
 		LoadedAtUnix: loadedAt.Unix(),
-		Gpu:          nil, // populated when NVML is available
 	}), nil
 }
 
-// decodeJPEG converts JPEG bytes to a [1, 3, 512, 512] float32 tensor
-// normalized to [-1, 1] for SigLIP2.
+func (s *InferenceServer) TritonHealth(ctx context.Context) (bool, error) {
+	return s.triton.Health(ctx)
+}
+
+func cosineSimilarity(a, b []float32) float32 {
+	var dot, normA, normB float32
+	for i := range a {
+		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / float32(math.Sqrt(float64(normA)*float64(normB)))
+}
+
 func decodeJPEG(jpegData []byte) ([][][]float32, error) {
 	img, err := jpeg.Decode(bytes.NewReader(jpegData))
 	if err != nil {
@@ -232,8 +287,6 @@ func decodeJPEG(jpegData []byte) ([][][]float32, error) {
 		return nil, fmt.Errorf("expected 512x512 image, got %dx%d", w, h)
 	}
 
-	// Convert to [C, H, W] float32 normalized to [-1, 1]
-	// SigLIP2 normalization: pixel = (raw/255 - 0.5) / 0.5
 	pixels := make([][][]float32, 3)
 	for c := 0; c < 3; c++ {
 		pixels[c] = make([][]float32, h)
@@ -256,15 +309,4 @@ func decodeJPEG(jpegData []byte) ([][][]float32, error) {
 	}
 
 	return pixels, nil
-}
-
-// TritonHealth checks Triton readiness (used by healthcheck endpoint).
-func (s *InferenceServer) TritonHealth(ctx context.Context) (bool, error) {
-	return s.triton.Health(ctx)
-}
-
-// Guard against NaN in scores.
-func init() {
-	// Ensure math functions don't produce NaN in edge cases
-	_ = math.MaxFloat64
 }

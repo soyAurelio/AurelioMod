@@ -7,12 +7,11 @@ services:
   triton:
     image: nvcr.io/nvidia/tritonserver:24.12-py3
     container_name: aureliomod-triton
-    runtime: nvidia
     environment:
       NVIDIA_VISIBLE_DEVICES: all
     ports:
-      - "8000:8000" # HTTP
-      - "8001:8001" # gRPC
+      - "8100:8000" # HTTP (8000 conflict with centrifugo)
+      - "8101:8001" # gRPC
     volumes:
       - ./models:/models
     command: tritonserver --model-repository=/models --log-verbose=1
@@ -27,10 +26,10 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
       interval: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     restart: unless-stopped
 
-  # === Inference Service (Go + tokenizer Rust) ===
+  # === Inference Service (Go) ===
   inference:
     build:
       context: .
@@ -40,11 +39,12 @@ services:
       - "8083:8080"
     environment:
       TRITON_ENDPOINT: "triton:8001"
-      CONFIG_PATH: "/etc/inference/config.yaml"
+      INFERENCE_CONFIG_PATH: "/etc/inference/config.yaml"
+      INFERENCE_INPUT_IDS_PATH: "/models/siglip2-512/input_ids.json"
       PORT: "8080"
     volumes:
       - ./inference/config.yaml:/etc/inference/config.yaml:ro
-      - ./models/siglip2-512/tokenizer.json:/models/siglip2-512/tokenizer.json:ro
+      - ./models/siglip2-512/input_ids.json:/models/siglip2-512/input_ids.json:ro
     depends_on:
       triton:
         condition: service_healthy

@@ -80,16 +80,39 @@ func (c *TritonClient) Close() error {
 	return c.conn.Close()
 }
 
-// Infer sends an inference request to Triton using binary tensor encoding.
-//
-// pixelValues: [nImages][3][512][512] float32 normalized to [-1, 1].
-// inputIDs: [nPrompts][seqLen] pre-computed token IDs (padded to max length).
-//
-// Returns the flattened logits_per_image [nImages * nPrompts] as float32.
+// Infer sends an inference request to Triton and returns logits_per_image.
 func (c *TritonClient) Infer(
 	ctx context.Context,
 	inputIDs [][]int64,
 	pixelValues [][][][]float32,
+) ([]float32, error) {
+	return c.inferWithOutput(ctx, inputIDs, pixelValues, "logits_per_image")
+}
+
+// InferTextEmbeds sends input_ids with zero pixel_values and returns text_embeds.
+func (c *TritonClient) InferTextEmbeds(
+	ctx context.Context,
+	inputIDs [][]int64,
+	pixelValues [][][][]float32,
+) ([]float32, error) {
+	return c.inferWithOutput(ctx, inputIDs, pixelValues, "text_embeds")
+}
+
+// InferImageEmbeds sends pixel_values with zero input_ids and returns image_embeds.
+func (c *TritonClient) InferImageEmbeds(
+	ctx context.Context,
+	inputIDs [][]int64,
+	pixelValues [][][][]float32,
+) ([]float32, error) {
+	return c.inferWithOutput(ctx, inputIDs, pixelValues, "image_embeds")
+}
+
+// inferWithOutput sends a request to Triton and extracts the named output tensor.
+func (c *TritonClient) inferWithOutput(
+	ctx context.Context,
+	inputIDs [][]int64,
+	pixelValues [][][][]float32,
+	outputName string,
 ) ([]float32, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -123,7 +146,7 @@ func (c *TritonClient) Infer(
 			},
 		},
 		Outputs: []*triton.ModelInferRequest_InferRequestedOutputTensor{
-			{Name: "logits_per_image"},
+			{Name: outputName},
 		},
 		RawInputContents: [][]byte{pixelBytes, inputIDBytes},
 	}
@@ -133,13 +156,13 @@ func (c *TritonClient) Infer(
 		return nil, fmt.Errorf("triton model infer: %w", err)
 	}
 
-	// RawOutputContents[0] is logits_per_image as FP32 little-endian.
+	// RawOutputContents[0] is the requested output tensor as FP32 little-endian.
 	if len(resp.RawOutputContents) == 0 {
-		return nil, fmt.Errorf("triton returned no output contents")
+		return nil, fmt.Errorf("triton returned no output contents for %q", outputName)
 	}
 
-	logits := bytesToFloat32Slice(resp.RawOutputContents[0])
-	return logits, nil
+	result := bytesToFloat32Slice(resp.RawOutputContents[0])
+	return result, nil
 }
 
 // Health checks if Triton is live and ready via gRPC.

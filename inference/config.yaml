@@ -14,7 +14,7 @@ model:
   tokenizer_max_length: 64
 
 triton:
-  endpoint: "localhost:8001"
+  endpoint: "triton:8001"
   dynamic_batching:
     max_queue_delay_ms: 5
     preferred_batch_size: [4, 8, 16, 32, 48]
