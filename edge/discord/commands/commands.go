@@ -135,8 +135,10 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 		// If it's a CDN image, download the binary for proper analysis.
 		// Use a fresh context — interaction Ctx may have a short deadline.
 		if strings.Contains(url, "cdn.discordapp.com") || strings.Contains(url, "media.discordapp.net") {
+			// Strip Discord CDN resize params (width/height) to get full-resolution image
+			fullURL := listener.StripCDNResizeParams(url)
 			dlCtx, dlCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			downloaded, ctStr, err := listener.DownloadAttachment(dlCtx, url, listener.MaxAttachmentBytes)
+			downloaded, ctStr, err := listener.DownloadAttachment(dlCtx, fullURL, listener.MaxAttachmentBytes)
 			dlCancel()
 			if err != nil {
 				logger.WarnContext(e.Ctx, "moderate_cdn_download_failed",

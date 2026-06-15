@@ -287,6 +287,12 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 				}
 			}
 		}
+		logger.InfoContext(ctx, "attachment urls collected",
+			slog.String("event", "attachment_urls_collected"),
+			slog.Int("num_urls", len(urlsToTry)),
+			slog.Int("num_attachments", len(event.Message.Attachments)),
+			slog.Int("num_embeds", len(event.Message.Embeds)),
+		)
 		for _, url := range urlsToTry {
 			logger.InfoContext(ctx, "checking attachment for download",
 				slog.String("event", "checking_attachment"),
@@ -295,7 +301,9 @@ func handleMessage(ctx context.Context, event *events.MessageCreate, analysisCli
 			)
 
 			if listener.IsDiscordCDN(url) {
-				downloaded, ct, err := listener.DownloadAttachment(ctx, url, listener.MaxAttachmentBytes)
+				// Strip Discord CDN resize params (width/height) to get full-resolution
+				fullURL := listener.StripCDNResizeParams(url)
+				downloaded, ct, err := listener.DownloadAttachment(ctx, fullURL, listener.MaxAttachmentBytes)
 				if err != nil {
 					logger.WarnContext(ctx, "attachment download failed, falling back to text",
 						slog.String("event", "attachment_download_failed"),

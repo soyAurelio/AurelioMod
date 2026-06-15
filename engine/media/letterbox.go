@@ -75,6 +75,17 @@ func LetterboxJPEG(src image.Image, targetSize int, quality int) ([]byte, error)
 	return buf.Bytes(), nil
 }
 
+// LetterboxJPEGFromBytes decodes JPEG bytes, applies letterbox to targetSize,
+// and returns a new JPEG at the given quality. Used by the pipeline to
+// convert 480p cache-normalized images to 512×512 SigLIP2 input.
+func LetterboxJPEGFromBytes(jpegData []byte, targetSize int, quality int) ([]byte, error) {
+	img, err := jpeg.Decode(bytes.NewReader(jpegData))
+	if err != nil {
+		return nil, fmt.Errorf("letterbox decode: %w", err)
+	}
+	return LetterboxJPEG(img, targetSize, quality)
+}
+
 // grayCanvas returns a targetSize×targetSize RGBA image filled with gray.
 func grayCanvas(size int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))

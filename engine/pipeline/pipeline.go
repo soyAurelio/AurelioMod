@@ -29,6 +29,7 @@ import (
 
 	"github.com/soyAurelio/AurelioMod/engine/analyzer"
 	"github.com/soyAurelio/AurelioMod/engine/hasher"
+	"github.com/soyAurelio/AurelioMod/engine/media"
 	"github.com/soyAurelio/AurelioMod/engine/telemetry"
 	"github.com/soyAurelio/AurelioMod/internal/cache"
 	"github.com/soyAurelio/AurelioMod/internal/weaviate"
@@ -621,12 +622,27 @@ func (p *pipeline) executeStandard(ctx context.Context, req *v1.AnalyzeRequest, 
 		}, nil
 	}
 
-	// Send normalized JPEG as Base64 data URI — AI analyzer downloads from URL,
-	// but we don't have a public URL until R2/MinIO upload. Base64 data URI
-	// avoids the fake "storage.aureliomod.dev" URL that doesn't resolve.
-	imageURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(normalized.JPEGBytes)
+	// Letterbox normalized image to 512×512 for SigLIP2 inference.
+	// The 480p JPEG is optimized for cache (L1/L2/L3), but SigLIP2
+	// expects 512×512 with gray padding.
+	lbJPEG, err := media.LetterboxJPEGFromBytes(normalized.JPEGBytes, 512, 85)
+	if err != nil {
+		slog.WarnContext(ctx, "pipeline: letterbox failed, using 480p fallback",
+			"error", err,
+			"workspace_id", req.WorkspaceId,
+		)
+		lbJPEG = normalized.JPEGBytes // fallback to 480p
+	}
+
+	// Send letterboxed JPEG as Base64 data URI to SigLIP2 analyzer.
+	imageURI := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(lbJPEG)
 	result, err := p.analyzer.Analyze(ctx, imageURI, "image/jpeg")
 	if err != nil {
+		slog.ErrorContext(ctx, "pipeline: analyzer failed",
+			"error", err,
+			"workspace_id", req.WorkspaceId,
+			"content_hash", l1Hash,
+		)
 		if degradeResp, degradedOk := p.lastChanceRecheck(ctx, l1Hash, ph, time.Since(start)); degradedOk {
 			return degradeResp, nil
 		}

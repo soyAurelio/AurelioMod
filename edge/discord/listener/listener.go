@@ -247,3 +247,18 @@ func IsDiscordCDN(rawURL string) bool {
 	return strings.Contains(host, "cdn.discordapp.com") ||
 		strings.Contains(host, "media.discordapp.net")
 }
+
+// StripCDNResizeParams removes width and height query parameters from a Discord
+// CDN URL. Discord serves reduced-size thumbnails when these params are present.
+// Stripping them fetches the full-resolution original image for analysis.
+func StripCDNResizeParams(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	q.Del("width")
+	q.Del("height")
+	u.RawQuery = q.Encode()
+	return u.String()
+}

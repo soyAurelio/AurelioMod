@@ -74,9 +74,15 @@ func NewInferenceClient(cfg InferenceClientConfig) *InferenceClient {
 		Timeout: cfg.Timeout,
 	}
 
+	addr := cfg.Addr
+	// If addr already contains a scheme, use it as-is; otherwise prepend http://
+	if !strings.Contains(addr, "://") {
+		addr = "http://" + addr
+	}
+
 	client := v1connect.NewInferenceServiceClient(
 		httpClient,
-		"http://"+cfg.Addr,
+		addr,
 		connect.WithGRPC(),
 	)
 

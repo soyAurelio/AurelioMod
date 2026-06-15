@@ -54,3 +54,4 @@ graphify-out/
 # Doc temporal
 siglip2.md
 scripts/seed_workspace.go
+models/siglip2-512/1/
