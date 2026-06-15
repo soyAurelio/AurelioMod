@@ -114,8 +114,17 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 	return func(data discord.SlashCommandInteractionData, e *handler.CommandEvent) error {
 		url := data.String("url")
 
+		logger.InfoContext(e.Ctx, "moderate_handler_started",
+			slog.String("event", "moderate_handler_started"),
+			slog.String("url", url),
+		)
+
 		// Defer immediately to beat Discord's 3-second timeout.
 		if err := e.DeferCreateMessage(true); err != nil {
+			logger.ErrorContext(e.Ctx, "moderate_defer_failed",
+				slog.String("event", "moderate_defer_failed"),
+				slog.String("error", err.Error()),
+			)
 			return err
 		}
 
@@ -124,8 +133,11 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 		rawBytes := []byte(url)
 
 		// If it's a CDN image, download the binary for proper analysis.
+		// Use a fresh context — interaction Ctx may have a short deadline.
 		if strings.Contains(url, "cdn.discordapp.com") || strings.Contains(url, "media.discordapp.net") {
-			downloaded, ctStr, err := listener.DownloadAttachment(e.Ctx, url, listener.MaxAttachmentBytes)
+			dlCtx, dlCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			downloaded, ctStr, err := listener.DownloadAttachment(dlCtx, url, listener.MaxAttachmentBytes)
+			dlCancel()
 			if err != nil {
 				logger.WarnContext(e.Ctx, "moderate_cdn_download_failed",
 					slog.String("event", "moderate_cdn_download_failed"),
