@@ -149,7 +149,12 @@ func moderateHandler(analysisClient client.AnalysisClient, workspaceID string, l
 			SourcePlatform: aureliomodv1.SourcePlatform_SOURCE_PLATFORM_DISCORD,
 		}
 
-		resp, err := analysisClient.Analyze(e.Ctx, req)
+		// Create a fresh context for the analysis call (interaction Ctx may
+		// have a short deadline even after DeferCreateMessage).
+		analyzeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		resp, err := analysisClient.Analyze(analyzeCtx, req)
 		if err != nil {
 			logger.ErrorContext(e.Ctx, "moderate_analysis_failed",
 				slog.String("event", "moderate_analysis_failed"),

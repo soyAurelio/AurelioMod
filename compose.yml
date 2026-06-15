@@ -215,7 +215,7 @@ services:
       OTEL_SERVICE_NAME: "${OTEL_SERVICE_NAME:-AurelioMod}"
       PORT: "8080"
       MEDIA_SANDBOX_ENABLED: "true"
-      WEBRISK_ENABLED: "true"
+      WEBRISK_ENABLED: "false"
       WEBRISK_API_KEY: "${WEBRISK_API_KEY:-}"
       NEON_AUDIT_ENABLED: "true"
       NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
