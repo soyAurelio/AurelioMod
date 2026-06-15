@@ -1,13 +1,12 @@
 // Command engine runs the AurelioMod content analysis Engine service.
-// It wires together the full pipeline (L1→L2→L3 cache hierarchy, WaveSpeed
+// It wires together the full pipeline (L1→L2→L3 cache hierarchy, SigLIP2
 // AI analysis, audit logging, NATS decision publishing, and quarantine
 // management) behind a ConnectRPC HTTP server.
 //
 // Configuration is via environment variables:
 //
+//	INFERENCE_ADDR           — SigLIP2 Inference Service address (host:port)
 //	PORT                     — HTTP listen port (default: 8080)
-//	WAVESPEED_API_KEY        — WaveSpeed API key (required for analysis)
-//	WAVESPEED_API_URL        — WaveSpeed API base URL (default: https://api.wavespeed.ai)
 //	DRAGONFLY_ADDR           — DragonflyDB address (default: localhost:6380)
 //	NATS_URL                 — NATS server URL (default: nats://localhost:4222)
 //	WEAVIATE_HOSTNAME        — Weaviate Cloud hostname (default: http://localhost:8090)
@@ -53,8 +52,7 @@ import (
 // loaded from environment variables.
 type serverConfig struct {
 	Port          string
-	WaveSpeedKey  string
-	WaveSpeedURL  string
+	InferenceAddr string // SigLIP2 Inference Service address (host:port)
 	DragonflyAddr string
 	NATSURL       string
 	WeaviateAddr  string
@@ -66,8 +64,7 @@ type serverConfig struct {
 func loadConfig() serverConfig {
 	return serverConfig{
 		Port:          env.Get("PORT", "8080"),
-		WaveSpeedKey:  os.Getenv("WAVESPEED_API_KEY"),
-		WaveSpeedURL:  env.Get("WAVESPEED_API_URL", "https://api.wavespeed.ai"),
+		InferenceAddr: os.Getenv("INFERENCE_ADDR"),
 		DragonflyAddr: env.Get("DRAGONFLY_ADDR", "localhost:6380"),
 		NATSURL:       env.Get("NATS_URL", "nats://localhost:4222"),
 		WeaviateAddr:  env.Get("WEAVIATE_HOSTNAME", "http://localhost:8090"),
@@ -191,7 +188,7 @@ func main() {
 }
 
 // newServer wires all dependencies and returns a configured HTTP server.
-// Dependencies that require external services (WaveSpeed, NATS, DragonflyDB,
+// Dependencies that require external services (Inference, NATS, DragonflyDB,
 // Weaviate) are optional — when their config is empty, they are skipped
 // and the server operates in degraded mode (returning QUEUED decisions).
 func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
@@ -253,13 +250,18 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	}
 	slog.InfoContext(ctx, "webrisk wired into pipeline URL safety gate")
 
-	// WaveSpeed analyzer (optional)
-	var waveSpeed analyzer.Analyzer
-	if cfg.WaveSpeedKey != "" {
-		waveSpeed = analyzer.NewWaveSpeedClient(cfg.WaveSpeedURL, cfg.WaveSpeedKey)
-		slog.InfoContext(ctx, "wavespeed client created", "url", cfg.WaveSpeedURL)
+	// Content analyzer selection:
+	//   INFERENCE_ADDR set → SigLIP2 Inference Service
+	//   Not set → analysis disabled, returns QUEUED
+	var contentAnalyzer analyzer.Analyzer
+	if cfg.InferenceAddr != "" {
+		inferenceCfg := analyzer.DefaultInferenceClientConfig(cfg.InferenceAddr)
+		contentAnalyzer = analyzer.NewInferenceClient(inferenceCfg)
+		slog.InfoContext(ctx, "siglip2 inference client created",
+			"addr", cfg.InferenceAddr,
+		)
 	} else {
-		slog.WarnContext(ctx, "WAVESPEED_API_KEY not set — analysis disabled, returning QUEUED")
+		slog.WarnContext(ctx, "INFERENCE_ADDR not set — AI analysis disabled, returning QUEUED")
 	}
 
 	// Weaviate L3 client (optional)
@@ -345,6 +347,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 	}
 
 	// Audit hook (fire-and-forget audit emission)
+	analystVersion := "siglip2-512-1.0.0"
 	auditHook := func(ctx context.Context, workspaceID, contentHash, decision, category string, confidence float64, processingMs int64) {
 		evt := audit.AuditEvent{
 			AuditID:               fmt.Sprintf("evt_%s_%d", contentHash[:12], time.Now().UnixNano()),
@@ -353,7 +356,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 			Decision:              decision,
 			Confidence:            confidence,
 			Category:              category,
-			AnalystVersion:        "wavespeed-v3.2",
+			AnalystVersion:        analystVersion,
 			NormalizationPipeline: "480p+strip_exif+jpeg_q85",
 			ProcessingMs:          processingMs,
 			TimestampUTC:          time.Now(),
@@ -384,7 +387,7 @@ func newServer(ctx context.Context, cfg serverConfig) (*http.Server, error) {
 		cacheClient, // L1 + L2 cache
 		cacheClient, // L2 cache (same DragonflyDB client)
 		normalizer,
-		waveSpeed,
+		contentAnalyzer,
 		wvClient,
 		pipeline.WithURLChecker(wrService),
 		pipeline.WithAuditHook(auditHook),
