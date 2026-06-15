@@ -59,7 +59,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/auth/login"
+          "url_pattern": "/v1/auth/login",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     },
@@ -75,7 +81,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/auth/refresh"
+          "url_pattern": "/v1/auth/refresh",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -101,7 +113,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces"
+          "url_pattern": "/v1/workspaces",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     },
@@ -125,7 +143,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces"
+          "url_pattern": "/v1/workspaces",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     },
@@ -140,7 +164,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces/{id}"
+          "url_pattern": "/v1/workspaces/{id}",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -158,7 +188,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces/{id}/stats"
+          "url_pattern": "/v1/workspaces/{id}/stats",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -176,7 +212,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces/{id}/decisions"
+          "url_pattern": "/v1/workspaces/{id}/decisions",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -194,7 +236,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces/{id}/decisions/{audit_id}"
+          "url_pattern": "/v1/workspaces/{id}/decisions/{audit_id}",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -213,7 +261,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/billing/checkout"
+          "url_pattern": "/v1/billing/checkout",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -232,7 +286,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/billing/portal"
+          "url_pattern": "/v1/billing/portal",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ],
       "extra_config": {
@@ -251,7 +311,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/webhooks/stripe"
+          "url_pattern": "/v1/webhooks/stripe",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     },
@@ -263,7 +329,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/billing/success"
+          "url_pattern": "/billing/success",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     },
@@ -275,7 +347,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/billing/cancel"
+          "url_pattern": "/billing/cancel",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     },
@@ -299,7 +377,13 @@
           "host": [
             "http://control:8080"
           ],
-          "url_pattern": "/v1/workspaces/{id}/consume"
+          "url_pattern": "/v1/workspaces/{id}/consume",
+          "extra_config": {
+            "qos/health-check": {
+              "url": "http://control:8080/healthz",
+              "timeout": "3s"
+            }
+          }
         }
       ]
     }
