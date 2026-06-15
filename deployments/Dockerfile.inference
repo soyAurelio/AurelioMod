@@ -1,0 +1,50 @@
+# AurelioMod Inference Service — Production Dockerfile
+# Multi-stage build. Pinned versions — June 2026.
+#
+# Architecture:
+#   Engine → ConnectRPC → Inference Service (this binary)
+#                       → HTTP → Triton (GPU, SigLIP2 ONNX)
+#
+# The inference service does NOT need:
+#   - Rust tokenizer (input_ids are pre-computed at build time)
+#   - ONNX Runtime (all inference runs on Triton GPU)
+#   - FFmpeg, nsjail, or media processing
+#
+# It's a thin Go proxy that:
+#   1. Normalizes JPEGs to [-1, 1] float32 tensors
+#   2. Sends input_ids + pixel_values to Triton HTTP API
+#   3. Applies sigmoid + thresholding to logits
+
+# === Stage 1: Build Go binary ===
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache ca-certificates git
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" \
+    -o /bin/inference ./cmd/inference
+
+# === Stage 2: Runtime ===
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates tzdata
+
+COPY --from=builder /bin/inference /usr/bin/inference
+
+EXPOSE 8080
+
+LABEL org.opencontainers.image.title="AurelioMod Inference Service"
+LABEL org.opencontainers.image.description="SigLIP2 zero-shot classification proxy to Triton GPU"
+LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.source="https://github.com/soyAurelio/AurelioMod"
+LABEL org.opencontainers.image.vendor="AurelioMod"
+
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 --start-period=10s \
+    CMD ["/usr/bin/inference", "-config", "/etc/inference/config.yaml", "-healthcheck"]
+
+ENTRYPOINT ["/usr/bin/inference"]

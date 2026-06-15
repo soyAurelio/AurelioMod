@@ -37,3 +37,19 @@ Thumbs.db
 # Local Pi runtime state
 .atl/
 openspec/
+
+# Modelos ONNX (grandes, se regeneran con optimum-cli)
+models/siglip2-512/vision/
+models/siglip2-512/text/
+
+# Python venv
+.venv/
+
+# Graphify output
+graphify-out/
+
+# SDD temp
+.sddenv/
+
+# Doc temporal
+siglip2.md

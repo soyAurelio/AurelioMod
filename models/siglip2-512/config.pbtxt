@@ -1,0 +1,102 @@
+# Triton Inference Server — SigLIP2 model configuration
+# Model: google/siglip2-so400m-patch16-512
+# Exported as unified ONNX (vision + text encoders)
+#
+# Architecture:
+#   Input:  pixel_values [B, 3, 512, 512] + input_ids [B, seq_len]
+#   Output: image_embeds [B, 1152], text_embeds [B, 1152], logits
+#
+# Text embeddings are pre-computed at Inference Service startup
+# and cached. Hot path only uses image_embeds.
+# Cosine similarity + sigmoid computed in Go (not in ONNX).
+
+name: "siglip2-512"
+platform: "onnxruntime_onnx"
+default_model_filename: "model.onnx"
+max_batch_size: 48
+
+input [
+  {
+    name: "pixel_values",
+    data_type: TYPE_FP32,
+    dims: [3, 512, 512]
+  },
+  {
+    name: "input_ids",
+    data_type: TYPE_INT64,
+    dims: [64],
+    optional: true
+  }
+]
+
+output [
+  {
+    name: "image_embeds",
+    data_type: TYPE_FP32,
+    dims: [1152]
+  },
+  {
+    name: "text_embeds",
+    data_type: TYPE_FP32,
+    dims: [1152]
+  },
+  {
+    name: "logits_per_image",
+    data_type: TYPE_FP32,
+    dims: [-1]
+  }
+]
+
+dynamic_batching {
+  max_queue_delay_microseconds: 5000
+  preferred_batch_size: [4, 8, 16, 32, 48]
+  preserve_ordering: false
+}
+
+instance_group [
+  {
+    count: 1,
+    kind: KIND_GPU,
+    gpus: [0]
+  }
+]
+
+optimization {
+  execution_accelerators {
+    gpu_execution_accelerator [
+      {
+        name: "tensorrt",
+        parameters { key: "precision_mode", value: "FP16" }
+        parameters { key: "precision_constraints", value: "obey" }
+        parameters { key: "trt_engine_cache_enable", value: "1" }
+        parameters { key: "trt_engine_cache_path", value: "/models/cache/" }
+        parameters { key: "max_workspace_size_bytes", value: "4294967296" }
+      }
+    ]
+  }
+}
+
+# Force LayerNorm and Softmax to FP32 for accuracy
+parameters [
+  {
+    key: "force_fp32_ops",
+    value: { string_value: "LayerNormalization,Softmax" }
+  }
+]
+
+model_warmup [
+  {
+    name: "warmup_b8"
+    batch_size: 8
+    inputs: {
+      key: "pixel_values"
+      value: { data_type: TYPE_FP32, dims: [8, 3, 512, 512], zero_data: true }
+    }
+    inputs: {
+      key: "input_ids"
+      value: { data_type: TYPE_INT64, dims: [8, 64], zero_data: true }
+    }
+  }
+]
+
+version_policy: { latest: { num_versions: 1 } }

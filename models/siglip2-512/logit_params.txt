@@ -1,0 +1,18 @@
+# SigLIP2 logit parameters — extracted from google/siglip2-so400m-patch16-512 checkpoint
+# Date: 2026-06-15
+
+# Raw parameter from model.logit_scale (log-space)
+logit_scale_raw=4.699638366699219
+# Actual scale = exp(logit_scale_raw)
+logit_scale=109.90741729736328
+# Bias applied directly
+logit_bias=-15.932647705078125
+# 1/scale — for reference
+logit_temperature=0.009099
+
+model_id=google/siglip2-so400m-patch16-512
+
+# Usage in Go classifier (SigLIP loss):
+#   similarity = cosine_sim(image_embeds, text_embeds)  # [-1, 1]
+#   logits = logit_scale * similarity + logit_bias       # 109.91 * cosine + (-15.93)
+#   probability = sigmoid(logits)                        # 1/(1+exp(-logits))

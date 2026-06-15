@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package aureliomod.v1;
+
+option go_package = "github.com/soyAurelio/AurelioMod/proto/aureliomod/v1;aureliomodv1";
+
+// InferenceService is the internal gRPC interface between Engine and the
+// SigLIP2 Inference Service. The Inference Service proxies requests to
+// Triton GPU for zero-shot image classification.
+//
+// Architecture:
+//   Engine (CPU) → ConnectRPC → Inference Service (Go, tokenizer Rust)
+//                              → gRPC → Triton (GPU, TensorRT SigLIP2)
+service InferenceService {
+  // Classify runs zero-shot classification on image(s) using SigLIP2.
+  // Supports single images and batched video frames.
+  rpc Classify(ClassifyRequest) returns (ClassifyResponse);
+
+  // Health returns model status and GPU information.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ClassifyRequest submits content for SigLIP2 classification.
+// The engine applies letterbox to 512×512 before sending.
+message ClassifyRequest {
+  oneof content {
+    ImageInput image = 1;
+    VideoInput video = 2;
+  }
+
+  // workspace_id carries the customer workspace for metrics and auditing.
+  string workspace_id = 3;
+
+  // trace_id links this request to the engine's OpenTelemetry trace.
+  string trace_id = 4;
+
+  // workspace_tier controls video frame limits: free, pro, or enterprise.
+  string workspace_tier = 5;
+}
+
+// ImageInput carries a single JPEG already letterboxed to 512×512.
+message ImageInput {
+  // jpeg_data is the image with letterbox padding applied by the engine.
+  bytes jpeg_data = 1;
+
+  // original dimensions for metrics and audit logging.
+  int32 original_width = 2;
+  int32 original_height = 3;
+}
+
+// VideoInput carries individual frames extracted by the engine.
+// Frames are sent in a single batch for parallel GPU inference.
+message VideoInput {
+  // frames are JPEGs with letterbox to 512×512. Max frames per tier.
+  repeated bytes frames = 1;
+
+  // aggregation strategy: "max" (default) takes the highest score per category
+  // across all frames. "weighted" gives more weight to middle frames.
+  string aggregation = 2;
+
+  // duration_sec is the total video duration for metrics.
+  float duration_sec = 3;
+
+  // extraction_fps is the frame extraction rate (1fps or 2fps enterprise).
+  float extraction_fps = 4;
+
+  // is_partial_scan is true when a trusted-domain video exceeds tier limits
+  // and only the first N seconds were scanned.
+  bool is_partial_scan = 5;
+
+  // scanned_seconds is the actual duration scanned in this batch.
+  float scanned_seconds = 6;
+}
+
+// ClassifyResponse contains zero-shot classification results.
+message ClassifyResponse {
+  // scores maps category name to sigmoid probability (0.0 to 1.0).
+  // Categories: sexual, violence, hate, harassment, self_harm, sexual_minors.
+  map<string, float> scores = 1;
+
+  // top_category is the category with the highest score.
+  string top_category = 2;
+
+  // confidence is the sigmoid score of the top category.
+  float confidence = 3;
+
+  // triggered lists categories where score exceeds the category threshold.
+  repeated string triggered = 4;
+
+  // inference_ms is GPU inference time (Triton batch processing).
+  int64 inference_ms = 5;
+
+  // batch_size is the number of images processed in this batch.
+  int32 batch_size = 6;
+
+  // model_version identifies the SigLIP2 model: "siglip2-512-1.0.0".
+  string model_version = 7;
+
+  // is_partial_scan echoes the input flag for the engine's decision logic.
+  bool is_partial_scan = 8;
+}
+
+// HealthRequest checks readiness of the Inference Service.
+message HealthRequest {}
+
+// HealthResponse reports model and GPU status.
+message HealthResponse {
+  // ready indicates the model is loaded and accepting requests.
+  bool ready = 1;
+
+  // model_version is the loaded SigLIP2 model version.
+  string model_version = 2;
+
+  // loaded_at_unix is the Unix timestamp when the model was loaded.
+  int64 loaded_at_unix = 3;
+
+  // gpu contains GPU hardware information.
+  GpuInfo gpu = 4;
+}
+
+// GpuInfo reports GPU hardware status via NVML.
+message GpuInfo {
+  // name is the GPU model name (e.g., "NVIDIA RTX 5080").
+  string name = 1;
+
+  // total_memory_mb is total VRAM in megabytes.
+  int64 total_memory_mb = 2;
+
+  // free_memory_mb is available VRAM in megabytes.
+  int64 free_memory_mb = 3;
+
+  // utilization_percent is current GPU utilization (0-100).
+  float utilization_percent = 4;
+}

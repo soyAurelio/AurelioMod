@@ -1,0 +1,51 @@
+# AurelioMod — GPU Services (Triton + Inference)
+# Extiende compose.yml para desarrollo local con RTX 5080
+# Uso: docker compose -f compose.yml -f compose.gpu.yml up -d triton inference
+
+services:
+  # === Triton Inference Server (GPU) ===
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.12-py3
+    container_name: aureliomod-triton
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    ports:
+      - "8000:8000" # HTTP
+      - "8001:8001" # gRPC
+    volumes:
+      - ./models:/models
+    command: tritonserver --model-repository=/models --log-verbose=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # === Inference Service (Go + tokenizer Rust) ===
+  inference:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.inference
+    container_name: aureliomod-inference
+    ports:
+      - "8083:8080"
+    environment:
+      TRITON_ENDPOINT: "triton:8001"
+      CONFIG_PATH: "/etc/inference/config.yaml"
+      PORT: "8080"
+    volumes:
+      - ./inference/config.yaml:/etc/inference/config.yaml:ro
+      - ./models/siglip2-512/tokenizer.json:/models/siglip2-512/tokenizer.json:ro
+    depends_on:
+      triton:
+        condition: service_healthy
+    restart: unless-stopped
