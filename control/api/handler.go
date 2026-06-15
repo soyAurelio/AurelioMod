@@ -21,6 +21,9 @@ import (
 //	GET    /v1/workspaces/:id/stats   — workspace stats
 //	GET    /v1/workspaces/:id/decisions           — decision history
 //	GET    /v1/workspaces/:id/decisions/:audit_id  — single decision
+//	POST   /v1/workspaces/:id/appeals              — submit appeal (GDPR Art.22)
+//	GET    /v1/workspaces/:id/appeals              — list appeals
+//	GET    /v1/workspaces/:id/appeals/:appeal_id   — get appeal
 func New(db *sql.DB, tm TokenManager) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "AurelioMod Control API",
@@ -59,6 +62,12 @@ func New(db *sql.DB, tm TokenManager) *fiber.App {
 	// Decisions (auth required)
 	v1.Get("/workspaces/:id/decisions", AuthMiddleware(tm), decisions.HandleListDecisions)
 	v1.Get("/workspaces/:id/decisions/:audit_id", AuthMiddleware(tm), decisions.HandleGetDecision)
+
+	// Appeals (auth required, GDPR Art.22)
+	apeals := NewAppealsHandler(db)
+	v1.Post("/workspaces/:id/appeals", AuthMiddleware(tm), apeals.HandleSubmit)
+	v1.Get("/workspaces/:id/appeals", AuthMiddleware(tm), apeals.HandleList)
+	v1.Get("/workspaces/:id/appeals/:appeal_id", AuthMiddleware(tm), apeals.HandleGet)
 
 	// MFA (auth required)
 	mfaSvc := NewMFA(Config{Issuer: "AurelioMod", DB: db})
